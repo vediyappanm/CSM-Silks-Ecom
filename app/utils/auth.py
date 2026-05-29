@@ -1,29 +1,28 @@
+"""CSM Silks — Authentication utilities (JWT + bcrypt)."""
+from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import bcrypt
 from app.config import settings
 from app.database import get_db
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer()
 
 
-# ── PASSWORD ─────────────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
 
-# ── JWT ──────────────────────────────────────────────────────────────────────
 def create_access_token(user_id: str, role: str) -> str:
     expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode(
@@ -51,7 +50,6 @@ def decode_token(token: str) -> dict:
         )
 
 
-# ── DEPENDENCIES ─────────────────────────────────────────────────────────────
 async def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
@@ -75,7 +73,6 @@ async def get_current_admin(current_user=Depends(get_current_user)):
     return current_user
 
 
-# Optional auth (returns None for unauthenticated)
 async def get_optional_user(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: AsyncSession = Depends(get_db),

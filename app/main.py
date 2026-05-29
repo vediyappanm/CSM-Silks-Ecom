@@ -3,15 +3,23 @@ CSM Silks API — FastAPI Application
 Platform: BuildVerse SaaS v3.1
 Backend: Python FastAPI + PostgreSQL + Redis + Claude AI
 """
+import logging
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-import time
 
 from app.config import settings
 from app.database import engine, Base
+
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("csm_silks")
 
 # Routers
 from app.routers.auth import router as auth_router
@@ -28,11 +36,12 @@ from app.routers.loyalty import router as loyalty_router
 # ── LIFESPAN ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create tables (use Alembic in production)
+    logger.info("Starting CSM Silks API v%s", settings.APP_VERSION)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables ready")
     yield
-    # Shutdown: dispose engine
+    logger.info("Shutting down CSM Silks API")
     await engine.dispose()
 
 
@@ -58,6 +67,26 @@ app.add_middleware(
 
 if not settings.DEBUG:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["api.csmsilks.com", "*.csmsilks.com"])
+
+
+# Simple in-memory rate limiter
+_ratelimit_store: dict[str, list[float]] = {}
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    if settings.APP_ENV == "development":
+        return await call_next(request)
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    window = 60.0
+    max_requests = settings.API_RATE_LIMIT
+    timestamps = _ratelimit_store.get(client_ip, [])
+    timestamps = [t for t in timestamps if now - t < window]
+    if len(timestamps) >= max_requests:
+        return JSONResponse(status_code=429, content={"success": False, "message": "Too many requests"})
+    timestamps.append(now)
+    _ratelimit_store[client_ip] = timestamps
+    return await call_next(request)
 
 
 @app.middleware("http")

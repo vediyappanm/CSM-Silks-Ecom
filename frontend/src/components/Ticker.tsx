@@ -1,17 +1,21 @@
 export function Ticker() {
   const items = [
-    '🪡 Pure Kanjivaram Silk', '💍 Bridal Collections', '✨ Handcrafted Zari',
-    '🏷 Free Blouse Included', '👔 Men\'s Silk Dhotis', '🚚 Pan India Shipping',
-    '📄 GST Invoice Provided', '⭐ GI Tagged Authentic', '🔄 15-Day Easy Returns',
-    '🪡 Pure Kanjivaram Silk', '💍 Bridal Collections', '✨ Handcrafted Zari',
-    '🏷 Free Blouse Included', '👔 Men\'s Silk Dhotis', '🚚 Pan India Shipping',
-    '📄 GST Invoice Provided', '⭐ GI Tagged Authentic', '🔄 15-Day Easy Returns',
+    'Pure Kanjivaram silk',
+    'Bridal collections',
+    'Handcrafted zari',
+    'Free blouse on sarees',
+    "Men's silk dhotis",
+    'Pan-India shipping',
+    'GST invoice',
+    '15-day returns',
   ];
+  const loop = [...items, ...items];
+
   return (
     <div className="ticker">
       <div className="ticker-inner">
-        {items.map((item, i) => (
-          <div key={i} className="ti">
+        {loop.map((item, index) => (
+          <div key={`${item}-${index}`} className="ti">
             {item}
             <div className="ti-dot" />
           </div>

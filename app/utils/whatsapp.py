@@ -1,12 +1,17 @@
 """WhatsApp Cloud API utilities — gracefully disabled when not configured."""
+import logging
 from app.config import settings
 
+logger = logging.getLogger("csm_silks.utils.whatsapp")
 
 WHATSAPP_ENABLED = bool(settings.WHATSAPP_API_KEY and settings.WHATSAPP_PHONE_NUMBER_ID)
+
+_ADMIN_PHONE = settings.ADMIN_PHONE or "+919999999999"
 
 
 async def send_whatsapp_template(to: str, template_name: str, components: list) -> dict:
     if not WHATSAPP_ENABLED:
+        logger.debug("WhatsApp not configured — skipping %s to %s", template_name, to)
         return {"status": "skipped", "reason": "WhatsApp not configured"}
     import aiohttp
     url = f"https://graph.facebook.com/v21.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
@@ -77,10 +82,8 @@ async def send_cart_recovery(to: str, name: str, product_name: str, cart_link: s
 
 async def send_daily_report_admin(revenue: float, orders: int, delivered: int, returns: int,
                                    top_product: str, report_link: str, date: str):
-    if not WHATSAPP_ENABLED:
-        return {"status": "skipped"}
     return await send_whatsapp_template(
-        settings.ADMIN_EMAIL,  # fallback: use email instead
+        _ADMIN_PHONE,
         "daily_report",
         [{
             "type": "body",
@@ -98,10 +101,8 @@ async def send_daily_report_admin(revenue: float, orders: int, delivered: int, r
 
 
 async def send_unsold_alert_admin(count: int, amount: float, dashboard_link: str):
-    if not WHATSAPP_ENABLED:
-        return {"status": "skipped"}
     return await send_whatsapp_template(
-        settings.ADMIN_EMAIL,
+        _ADMIN_PHONE,
         "unsold_alert",
         [{
             "type": "body",

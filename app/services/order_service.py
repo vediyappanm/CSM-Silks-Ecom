@@ -12,7 +12,6 @@ from app.models.product import Product
 from app.models.user import User
 from app.models.loyalty import LoyaltyTransaction
 from app.config import settings
-from app.utils.whatsapp import send_order_confirmed
 
 
 def calculate_gst(subtotal: float) -> tuple[float, float]:
@@ -80,6 +79,7 @@ async def create_order_from_cart(
     address_id: uuid.UUID,
     coupon_code: str | None,
     db: AsyncSession,
+    loyalty_points_to_use: int = 0,
 ) -> Order:
     # Load cart items with products
     cart_result = await db.execute(
@@ -117,7 +117,12 @@ async def create_order_from_cart(
     if coupon_code == "COMEBACK10":
         discount = round(subtotal * 0.10, 2)
 
-    taxable_amount = subtotal - discount
+    # Loyalty points redemption (1 point = ₹1)
+    loyalty_discount = min(loyalty_points_to_use, user.loyalty_points, int(subtotal))
+    if loyalty_discount > 0:
+        user.loyalty_points -= loyalty_discount
+
+    taxable_amount = subtotal - discount - loyalty_discount
     cgst, sgst = calculate_gst(taxable_amount)
     total = taxable_amount + cgst + sgst
 
@@ -129,13 +134,14 @@ async def create_order_from_cart(
         user_id=user.id,
         address_id=address_id,
         subtotal=subtotal,
-        discount_amount=discount,
+        discount_amount=discount + loyalty_discount,
         coupon_code=coupon_code,
         cgst_amount=cgst,
         sgst_amount=sgst,
         total_amount=total,
         status=OrderStatus.CONFIRMED,
         loyalty_points_earned=points_earned,
+        loyalty_points_used=loyalty_discount,
         confirmed_at=datetime.utcnow(),
     )
     order.items = order_items

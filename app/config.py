@@ -1,7 +1,6 @@
 """CSM Silks — Settings (env-based config)."""
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
-from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -28,13 +27,15 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
 
-    # ── REDIS ───────────────────────────────────────────
+    # ── REDIS / CELERY ──────────────────────────────────
     REDIS_URL: str = ""
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
 
     # ── JWT ─────────────────────────────────────────────
     SECRET_KEY: str = "change-me-in-production-min-32-chars!!"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60  # 1 hour
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # ── AI / ANTHROPIC ──────────────────────────────────
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     FROM_EMAIL: str = "noreply@csmsilks.com"
     FROM_NAME: str = "CSM Silks"
     ADMIN_EMAIL: str = "admin@csmsilks.com"
+    ADMIN_PHONE: str = ""
 
     # ── SHIPROCKET ──────────────────────────────────────
     SHIPROCKET_EMAIL: str = ""
@@ -80,9 +82,12 @@ class Settings(BaseSettings):
     FREE_SHIPPING_THRESHOLD: float = 999.0
     PLATFORM: str = "BuildVerse"
 
+    # ── LOGGING ─────────────────────────────────────────
+    LOG_LEVEL: str = "INFO"
+
     # ── RATE LIMITING ───────────────────────────────────
-    OTP_RATE_LIMIT: int = 3  # per phone per hour
-    API_RATE_LIMIT: int = 100  # per minute
+    OTP_RATE_LIMIT: int = 3
+    API_RATE_LIMIT: int = 100
 
 
 @lru_cache()

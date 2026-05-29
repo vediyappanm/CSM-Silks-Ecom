@@ -34,14 +34,14 @@ def test_order_number_format():
 
 @pytest.mark.asyncio
 async def test_order_requires_auth(client):
-    resp = await client.post("/api/v1/orders", json={"address_id": "00000000-0000-0000-0000-000000000000"})
+    resp = await client.post("/api/orders", json={"address_id": "00000000-0000-0000-0000-000000000000"})
     assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_list_orders_authenticated(client, user_token):
     resp = await client.get(
-        "/api/v1/orders",
+        "/api/orders",
         headers={"Authorization": f"Bearer {user_token}"},
     )
     assert resp.status_code == 200
@@ -53,7 +53,7 @@ async def test_list_orders_authenticated(client, user_token):
 @pytest.mark.asyncio
 async def test_cart_add_nonexistent_product(client, user_token):
     resp = await client.post(
-        "/api/v1/cart",
+        "/api/cart",
         json={"product_id": "00000000-0000-0000-0000-000000000000", "quantity": 1},
         headers={"Authorization": f"Bearer {user_token}"},
     )
@@ -64,7 +64,7 @@ async def test_cart_add_nonexistent_product(client, user_token):
 async def test_cart_flow(client, user_token, admin_token):
     # Create a product
     create_resp = await client.post(
-        "/api/v1/products",
+        "/api/products",
         json={
             "sku": "CSM-KAN-TEST",
             "name": "Test Kanjivaram",
@@ -82,7 +82,7 @@ async def test_cart_flow(client, user_token, admin_token):
 
     # Add to cart
     add_resp = await client.post(
-        "/api/v1/cart",
+        "/api/cart",
         json={"product_id": product_id, "quantity": 1},
         headers={"Authorization": f"Bearer {user_token}"},
     )
@@ -94,6 +94,6 @@ async def test_cart_flow(client, user_token, admin_token):
     assert abs(cart_data["sgst"] - 162.48) < 1.0  # 2.5%
 
     # Get cart
-    get_resp = await client.get("/api/v1/cart", headers={"Authorization": f"Bearer {user_token}"})
+    get_resp = await client.get("/api/cart", headers={"Authorization": f"Bearer {user_token}"})
     assert get_resp.status_code == 200
     assert get_resp.json()["item_count"] == 1

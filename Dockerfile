@@ -13,10 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/backend:/app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["gunicorn", "csm_backend.wsgi:application", "--chdir", "backend", "--bind", "0.0.0.0:8000", "--workers", "4"]

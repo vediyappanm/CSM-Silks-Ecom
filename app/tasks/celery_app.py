@@ -1,11 +1,15 @@
 """app/tasks/celery_app.py — Celery + APScheduler configuration"""
 from celery import Celery
+from celery.schedules import crontab
 from app.config import settings
+
+_broker = settings.CELERY_BROKER_URL or settings.REDIS_URL or "redis://localhost:6379/0"
+_backend = settings.CELERY_RESULT_BACKEND or settings.REDIS_URL or "redis://localhost:6379/0"
 
 celery_app = Celery(
     "csm_silks",
-    broker=settings.CELERY_BROKER_URL,
-    backend=settings.CELERY_RESULT_BACKEND,
+    broker=_broker,
+    backend=_backend,
     include=["app.tasks.daily_report", "app.tasks.unsold_alert"],
 )
 
@@ -16,15 +20,13 @@ celery_app.conf.update(
     timezone="Asia/Kolkata",
     enable_utc=True,
     beat_schedule={
-        # Daily report: 9 AM IST every day
         "daily-report": {
             "task": "app.tasks.daily_report.generate_daily_report",
-            "schedule": 32400.0,  # 9 * 3600 seconds from midnight
+            "schedule": crontab(hour=9, minute=0),
         },
-        # Unsold alert: every 6 hours
         "unsold-alert": {
             "task": "app.tasks.unsold_alert.check_unsold_products",
-            "schedule": 21600.0,  # 6 hours
+            "schedule": crontab(hour="*/6", minute=0),
         },
     },
 )

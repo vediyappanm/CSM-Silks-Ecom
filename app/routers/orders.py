@@ -1,4 +1,4 @@
-import uuid, math
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -24,6 +24,7 @@ async def place_order(
             user=current_user,
             address_id=body.address_id,
             coupon_code=body.coupon_code,
+            loyalty_points_to_use=body.loyalty_points_to_use or 0,
             db=db,
         )
     except ValueError as e:

@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Bell, Heart, Home, MapPin, Menu, Search, Shirt, ShoppingBag, Sparkles, UserRound, X } from 'lucide-react';
+import { BrandMark } from '@/ui/components';
 import { useApp } from '@/store/AppContext';
 
 export function Navbar() {
@@ -9,65 +11,90 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
+  const closeAndGo = (path: string) => {
+    navigate(path);
+    setMobileOpen(false);
+  };
 
   const navItems = [
-    { path: '/', label: '🏠 Home' },
-    { path: '/womens', label: '🪡 Women\'s' },
-    { path: '/mens', label: '👔 Men\'s Silk', cls: 'mens' },
-    { path: '/search', label: '🔍 Search' },
+    { path: '/', label: 'Home', icon: Home },
+    { path: '/womens', label: 'Women', icon: Sparkles },
+    { path: '/mens', label: 'Men', icon: Shirt },
+    { path: '/search', label: 'Search', icon: Search },
   ];
 
   return (
     <>
       <nav className="nav">
-        <div className="nav-logo" onClick={() => navigate('/')}>
-          <div className="nav-mark">🪡</div>
-          <div>
-            <div className="nav-brand">CSM SILKS</div>
-            <div className="nav-sub">Kanchipuram · Est. 1987</div>
-          </div>
-        </div>
+        <button className="nav-logo" onClick={() => navigate('/')} aria-label="Go to CSM Silks home">
+          <BrandMark />
+        </button>
+
+        <button className="nav-location" onClick={() => navigate('/search')} aria-label="Set delivery location">
+          <MapPin size={16} />
+          <span>Deliver to 600001</span>
+        </button>
+
         <div className="nav-links">
-          {navItems.map(item => (
-            <button
-              key={item.path}
-              className={`nav-link ${isActive(item.path) ? 'on' : ''} ${item.cls || ''}`}
-              onClick={() => navigate(item.path)}
-            >
-              {item.label}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.path}
+                className={`nav-link ${isActive(item.path) ? 'on' : ''}`}
+                onClick={() => navigate(item.path)}
+              >
+                <Icon size={16} />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
+
         <div className="nav-actions">
-          <button className="nav-icon-btn" onClick={() => navigate('/notifications')} title="Notifications" style={{ position: 'relative' }}>
-            🔔
-            <span style={{
-              position: 'absolute', top: '-4px', right: '-4px', width: '14px', height: '14px',
-              borderRadius: '50%', background: 'var(--crimson)', fontSize: '7px', fontWeight: 700,
-              color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              border: '1.5px solid var(--ink)'
-            }}>3</span>
+          <button className="nav-icon-btn" onClick={() => navigate('/notifications')} aria-label="Notifications">
+            <Bell size={18} />
+            <span className="nav-badge subtle">3</span>
           </button>
-          <button className="nav-icon-btn" onClick={() => navigate('/wishlist')} title="Wishlist">♡</button>
-          <button className="nav-icon-btn" onClick={() => navigate('/cart')} title="Cart" style={{ position: 'relative' }}>
-            🛒
+          <button className="nav-icon-btn" onClick={() => navigate('/wishlist')} aria-label="Wishlist">
+            <Heart size={18} />
+          </button>
+          <button className="nav-icon-btn" onClick={() => navigate('/cart')} aria-label="Cart">
+            <ShoppingBag size={18} />
             {cartCount > 0 && <span className="nav-badge">{cartCount}</span>}
           </button>
-          <button className="nav-icon-btn" onClick={() => navigate('/account')} title="Account">👤</button>
-          <button className="nav-cta" onClick={() => navigate('/womens')}>Shop Now ✦</button>
-          <button className="nav-mob-menu" onClick={() => setMobileOpen(true)}>☰</button>
+          <button className="nav-icon-btn" onClick={() => navigate('/account')} aria-label="Account">
+            <UserRound size={18} />
+          </button>
+          <button className="nav-cta" onClick={() => navigate('/womens')}>Shop silk</button>
+          <button className="nav-mob-menu" onClick={() => setMobileOpen(true)} aria-label="Open menu">
+            <Menu size={20} />
+          </button>
         </div>
       </nav>
 
-      {/* Mobile Menu */}
       <div className={`mob-menu ${mobileOpen ? 'on' : ''}`}>
-        <button className="mob-menu-close" onClick={() => setMobileOpen(false)}>✕</button>
-        <div className="mm-link" onClick={() => { navigate('/'); setMobileOpen(false); }}>🏠 Home</div>
-        <div className="mm-link" onClick={() => { navigate('/womens'); setMobileOpen(false); }}>🪡 Women's Sarees</div>
-        <div className="mm-link mens" onClick={() => { navigate('/mens'); setMobileOpen(false); }}>👔 Men's Silk</div>
-        <div className="mm-link" onClick={() => { navigate('/cart'); setMobileOpen(false); }}>🛒 Cart</div>
-        <div className="mm-link" onClick={() => { navigate('/orders'); setMobileOpen(false); }}>📦 My Orders</div>
-        <div className="mm-link" onClick={() => { navigate('/account'); setMobileOpen(false); }}>👤 My Account</div>
+        <button className="mob-menu-close" onClick={() => setMobileOpen(false)} aria-label="Close menu">
+          <X size={20} />
+        </button>
+        <BrandMark />
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button key={item.path} className="mm-link" onClick={() => closeAndGo(item.path)}>
+              <Icon size={18} />
+              {item.label}
+            </button>
+          );
+        })}
+        <button className="mm-link" onClick={() => closeAndGo('/orders')}>
+          <ShoppingBag size={18} />
+          My orders
+        </button>
+        <button className="mm-link" onClick={() => closeAndGo('/account')}>
+          <UserRound size={18} />
+          Account
+        </button>
       </div>
     </>
   );

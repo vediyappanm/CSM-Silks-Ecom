@@ -1,58 +1,94 @@
-import { useState, useEffect } from 'react';
-import { WOMENS } from '@/lib/data';
-import { ProductCard } from '@/components/ProductCard';
+import { useEffect, useState } from 'react';
+import { SlidersHorizontal } from 'lucide-react';
+import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
+import { ProductCard } from '@/features/catalog/components/ProductCard';
+import { api } from '@/lib/api';
+import type { CatalogFacets, Product } from '@/types';
 
 const CATS = ['all', 'kanjivaram', 'bridal', 'festive', 'patola', 'daily', 'mysore', 'banarasi'] as const;
 
 export function Womens() {
   const [filter, setFilter] = useState<string>('all');
-
-  const products = filter === 'all' ? WOMENS : WOMENS.filter(p => p.tags.includes(filter));
+  const [products, setProducts] = useState<Product[]>([]);
+  const [facets, setFacets] = useState<CatalogFacets | null>(null);
+  const [sort, setSort] = useState('popularity');
+  const [rating, setRating] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+  const [inStock, setInStock] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
+  useEffect(() => {
+    api.products.facets({ gender: 'women' }).then(setFacets).catch(() => setFacets(null));
+  }, []);
+
+  useEffect(() => {
+    api.products.list({
+      gender: 'women',
+      category: filter === 'all' ? undefined : filter,
+      sort,
+      rating,
+      max_price: maxPrice,
+      availability: inStock ? 'in_stock' : undefined,
+      per_page: 48,
+    })
+      .then(data => setProducts(data.items))
+      .catch(() => setProducts([]))
+      .finally(() => setLoading(false));
+  }, [filter, sort, rating, maxPrice, inStock]);
+
+  const changeFilter = (nextFilter: string) => {
+    setLoading(true);
+    setFilter(nextFilter);
+  };
+
   return (
-    <div>
-      <div style={{ background: 'var(--ink2)', borderBottom: '1px solid var(--gb)', padding: '28px 4vw' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--gold)', marginBottom: 8 }}>
-            Women's Collection · பெண்கள் சேகரிப்பு
+    <div className="catalog-page">
+      <header className="catalog-hero women">
+        <div>
+          <span>Women's collection</span>
+          <h1>Pure silk sarees</h1>
+          <p>Handwoven Kanjivaram, bridal, festive, daily, Patola, Mysore, and Banarasi edits with live stock.</p>
+        </div>
+      </header>
+
+      <div className="filter-bar">
+        <div className="filter-bar-inner">
+          <div className="filter-title"><SlidersHorizontal size={16} /> Collections</div>
+          <div className="filter-scroll">
+            {CATS.map(c => (
+              <button key={c} className={`filter-chip ${filter === c ? 'active' : ''}`} onClick={() => changeFilter(c)}>
+                {c === 'all' ? 'All sarees' : c.charAt(0).toUpperCase() + c.slice(1)}
+              </button>
+            ))}
           </div>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: 'clamp(28px,5vw,52px)', fontWeight: 800, color: 'var(--cream)', letterSpacing: '-.3px' }}>
-            Pure Silk <em style={{ fontStyle: 'italic', fontWeight: 400, color: 'var(--gold2)', fontFamily: 'var(--acc)' }}>Sarees</em>
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 6 }}>200+ handwoven designs · Free blouse included · GI Tagged</p>
         </div>
       </div>
 
-      <div style={{ padding: '16px 4vw', background: 'var(--ink3)', borderBottom: '1px solid var(--gb)', overflowX: 'auto' }}>
-        <div style={{ display: 'flex', gap: 8, maxWidth: 1200, margin: '0 auto', whiteSpace: 'nowrap' }}>
-          {CATS.map(c => (
-            <button
-              key={c}
-              onClick={() => setFilter(c)}
-              style={{
-                padding: '7px 16px', borderRadius: 8, border: `1px solid ${filter === c ? 'var(--gold)' : 'rgba(255,255,255,.1)'}`,
-                background: filter === c ? 'var(--gd)' : 'rgba(255,255,255,.04)',
-                color: filter === c ? 'var(--gold2)' : 'var(--muted)',
-                fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', cursor: 'pointer', transition: 'all .14s'
-              }}
-            >
-              {c === 'all' ? 'All Sarees' : c.charAt(0).toUpperCase() + c.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
+      <CatalogToolbar
+        facets={facets}
+        sort={sort}
+        rating={rating}
+        availability={inStock}
+        maxPrice={maxPrice}
+        onSort={(value) => { setLoading(true); setSort(value); }}
+        onRating={(value) => { setLoading(true); setRating(value); }}
+        onAvailability={(value) => { setLoading(true); setInStock(value); }}
+        onMaxPrice={(value) => { setLoading(true); setMaxPrice(value); }}
+      />
 
-      <div className="section" style={{ paddingTop: 40 }}>
-        <div className="pg">
-          {products.map(p => (
-            <ProductCard key={p.id} product={p} />
-          ))}
-        </div>
-      </div>
+      <section className="section surface-section">
+        {loading ? (
+          <div className="loading-state">Loading collection...</div>
+        ) : (
+          <div className="pg">
+            {products.map(product => <ProductCard key={product.id} product={product} />)}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

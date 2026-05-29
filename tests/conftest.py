@@ -46,10 +46,10 @@ async def client():
 @pytest.fixture
 async def admin_token(client):
     # Send OTP
-    resp = await client.post("/api/v1/auth/otp/send", json={"phone": "+919999999999"})
+    resp = await client.post("/api/auth/otp/send", json={"phone": "+919999999999"})
     otp = resp.json()["dev_otp"]
     # Verify OTP
-    resp = await client.post("/api/v1/auth/otp/verify", json={"phone": "+919999999999", "otp": otp})
+    resp = await client.post("/api/auth/otp/verify", json={"phone": "+919999999999", "otp": otp})
     token = resp.json()["access_token"]
     # Promote to admin in DB
     async with TestSession() as db:
@@ -64,7 +64,7 @@ async def admin_token(client):
 
 @pytest.fixture
 async def user_token(client):
-    resp = await client.post("/api/v1/auth/otp/send", json={"phone": "+918888888888"})
+    resp = await client.post("/api/auth/otp/send", json={"phone": "+918888888888"})
     otp = resp.json()["dev_otp"]
-    resp = await client.post("/api/v1/auth/otp/verify", json={"phone": "+918888888888", "otp": otp})
+    resp = await client.post("/api/auth/otp/verify", json={"phone": "+918888888888", "otp": otp})
     return resp.json()["access_token"]

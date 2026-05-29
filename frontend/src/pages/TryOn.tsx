@@ -4,7 +4,7 @@ import { useApp } from '@/store/AppContext';
 
 export function TryOn() {
   const navigate = useNavigate();
-  const { addToCart, showToast } = useApp();
+  const { addToCart } = useApp();
   const [skin, setSkin] = useState('');
   const [body, setBody] = useState('');
   const [drape, setDrape] = useState('');
@@ -177,7 +177,7 @@ export function TryOn() {
                     Browse Sarees
                   </button>
                   <button
-                    onClick={() => { addToCart({ id: 1, name: 'Royal Kanjivaram Gold Zari', price: 12999, mrp: 15999, badge: 'pb-hot', ['badge-text']: '⭐ Bestseller', emoji: '🪡', bg: 'linear-gradient(145deg,#2A1808,#8A4A18,#C4923A)', hook: 'The crown jewel of every bridal trousseau', colors: ['#C4923A'], gender: 'women', tags: ['kanjivaram'], cat: 'Kanjivaram' }); }}
+                    onClick={() => { void addToCart({ id: 1, slug: 'royal-kanjivaram-gold-zari', name: 'Royal Kanjivaram Gold Zari', price: 12999, mrp: 15999, badge: 'pb-hot', ['badge-text']: 'Bestseller', emoji: 'CSM', bg: 'linear-gradient(145deg,#2A1808,#8A4A18,#C4923A)', hook: 'The crown jewel of every bridal trousseau', colors: ['#C4923A'], gender: 'women', tags: ['kanjivaram'], cat: 'Kanjivaram' }); }}
                     style={{
                       flex: 1.5, padding: 11, background: 'linear-gradient(135deg,var(--gold),var(--gold2))',
                       color: '#000', border: 'none', borderRadius: 10,

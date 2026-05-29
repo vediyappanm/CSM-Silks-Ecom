@@ -1,125 +1,252 @@
+import type { Address, CartResponse, CatalogFacets, DeliveryCheck, Order, PaginatedResponse, Product, ProductReview, User } from '@/types';
+
 const API_BASE = '/api';
+const ACCESS_KEY = 'csm_access_token';
+const REFRESH_KEY = 'csm_refresh_token';
+
+type JsonMap = Record<string, unknown>;
+type RazorpayOrderResponse = { razorpay_order_id: string; amount: number; currency: string; order_id: number; key?: string };
+type PaymentVerifyPayload = { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string };
+type AdminDashboardResponse = { kpis: JsonMap; recent_orders: JsonMap[] };
+type UnsoldResponse = { count: number; total_capital_blocked: number | string; items: JsonMap[] };
+type WishlistApiItem = { id: number; product: Product; created_at: string };
+
+export function getAccessToken() {
+  return localStorage.getItem(ACCESS_KEY);
+}
+
+export function setTokens(access?: string, refresh?: string) {
+  if (access) localStorage.setItem(ACCESS_KEY, access);
+  if (refresh) localStorage.setItem(REFRESH_KEY, refresh);
+}
+
+export function clearTokens() {
+  localStorage.removeItem(ACCESS_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+}
+
+function normalizeProduct(product: Product): Product {
+  return {
+    ...product,
+    price: Number(product.price || 0),
+    mrp: Number(product.mrp || 0),
+    colors: product.colors || product.colours || ['#C4923A'],
+    hook: product.hook || '',
+    badge: product.badge || 'pb-new',
+    'badge-text': product['badge-text'] || 'New',
+    emoji: product.emoji || 'CSM',
+    bg: product.bg || 'linear-gradient(145deg,#1A1208,#8B1A1A,#C4923A)',
+  };
+}
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
-  const res = await fetch(url, {
+  const token = getAccessToken();
+  const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
     ...options,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `API error: ${res.status}`);
+    throw new Error(err.detail || err.message || `API error: ${res.status}`);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
 export const api = {
-  // Products
+  tokens: { getAccessToken, setTokens, clearTokens },
+
   products: {
-    list: (params?: Record<string, string | number>) => {
-      const qs = params ? '?' + new URLSearchParams(
-        Object.entries(params).map(([k, v]) => [k, String(v)])
-      ).toString() : '';
-      return request<any[]>(`/products${qs}`);
+    list: async (params?: Record<string, string | number | boolean | undefined>) => {
+      const entries = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== '');
+      const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
+      const data = await request<PaginatedResponse<Product>>(`/products${qs}`);
+      return { ...data, items: data.items.map(normalizeProduct) };
     },
-    get: (slug: string) => request<any>(`/products/${slug}`),
+    search: async (params?: Record<string, string | number | boolean | undefined>) => {
+      const entries = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== '');
+      const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
+      const data = await request<PaginatedResponse<Product>>(`/search${qs}`);
+      return { ...data, items: data.items.map(normalizeProduct) };
+    },
+    get: async (slug: string) => normalizeProduct(await request<Product>(`/products/${slug}`)),
+    facets: (params?: Record<string, string | number | boolean | undefined>) => {
+      const entries = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== '');
+      const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
+      return request<CatalogFacets>(`/catalog/facets${qs}`);
+    },
+    delivery: (slug: string, pin_code: string) =>
+      request<DeliveryCheck>(`/products/${slug}/delivery?pin_code=${encodeURIComponent(pin_code)}`),
+    reviews: {
+      list: (slug: string) => request<ProductReview[]>(`/products/${slug}/reviews`),
+      create: (slug: string, data: { rating: number; title: string; body: string }) =>
+        request<ProductReview>(`/products/${slug}/reviews`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+    },
   },
 
-  // Auth
   auth: {
-    sendOtp: (phone: string) => request<{ message: string }>('/auth/otp/send', {
+    sendOtp: (phone: string) => request<{ message: string; dev_otp?: string }>('/auth/otp/send', {
       method: 'POST',
       body: JSON.stringify({ phone }),
     }),
-    verifyOtp: (phone: string, otp: string) => request<{ token: string; user: any }>('/auth/otp/verify', {
-      method: 'POST',
-      body: JSON.stringify({ phone, otp }),
-    }),
-    me: () => request<any>('/auth/me'),
-    updateMe: (data: any) => request<any>('/auth/me', {
+    verifyOtp: async (phone: string, otp: string) => {
+      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone, otp }),
+      });
+      setTokens(data.access_token, data.refresh_token);
+      return data;
+    },
+    adminLogin: async (email: string, password: string) => {
+      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+      setTokens(data.access_token, data.refresh_token);
+      return data;
+    },
+    me: () => request<User>('/auth/me'),
+    updateMe: (data: Partial<User>) => request<User>('/auth/me', {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
-    refresh: () => request<any>('/auth/refresh', { method: 'POST' }),
+    refresh: async () => {
+      const refresh = localStorage.getItem(REFRESH_KEY);
+      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ refresh }),
+      });
+      setTokens(data.access_token, data.refresh_token);
+      return data;
+    },
+    logout: () => {
+      clearTokens();
+      return Promise.resolve();
+    },
   },
 
-  // Cart
   cart: {
-    get: () => request<any[]>('/cart'),
-    add: (product_id: number, quantity: number, colour?: string) =>
-      request<any>('/cart/add', {
+    get: () => request<CartResponse>('/cart'),
+    add: (variant_id: number, quantity: number) =>
+      request<CartResponse>('/cart', {
         method: 'POST',
-        body: JSON.stringify({ product_id, quantity, colour }),
+        body: JSON.stringify({ variant_id, quantity }),
+      }),
+    update: (itemId: number, quantity: number) =>
+      request<CartResponse>(`/cart/items/${itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ quantity }),
       }),
     remove: (itemId: number) =>
-      request<any>(`/cart/${itemId}`, { method: 'DELETE' }),
-  },
-
-  // Orders
-  orders: {
-    list: (page = 1) => request<any>(`/orders?page=${page}`),
-    get: (orderId: string) => request<any>(`/orders/${orderId}`),
-    create: (address_id: number) =>
-      request<any>('/orders', {
+      request<CartResponse>(`/cart/items/${itemId}`, { method: 'DELETE' }),
+    clear: () => request<void>('/cart', { method: 'DELETE' }),
+    coupon: (coupon_code: string) =>
+      request<CartResponse>('/cart/coupon', {
         method: 'POST',
-        body: JSON.stringify({ address_id }),
+        body: JSON.stringify({ coupon_code }),
       }),
-    cancel: (orderId: string) =>
-      request<any>(`/orders/${orderId}/cancel`, { method: 'POST' }),
+    summary: () => request<CartResponse>('/checkout/summary'),
   },
 
-  // Payments
+  orders: {
+    list: () => request<PaginatedResponse<Order>>('/orders'),
+    get: (orderId: string | number) => request<Order>(`/orders/${orderId}`),
+    create: (data: { address_id: number; coupon_code?: string; loyalty_points_to_use?: number; payment_method?: 'cod' | 'razorpay' }) =>
+      request<Order>('/orders', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    cancel: (orderId: string | number) =>
+      request<Order>(`/orders/${orderId}/cancel`, { method: 'POST' }),
+  },
+
+  returns: {
+    list: () => request<JsonMap[]>('/returns'),
+    create: (data: { order_id: number; reason: string; details?: string }) =>
+      request<JsonMap>('/returns', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+  },
+
   payments: {
-    createOrder: (orderId: string) =>
-      request<any>('/payments/create-order', {
+    createRazorpayOrder: (orderId: number) =>
+      request<RazorpayOrderResponse>('/payments/razorpay/order', {
         method: 'POST',
         body: JSON.stringify({ order_id: orderId }),
       }),
-    verify: (data: any) =>
-      request<any>('/payments/verify', {
+    verify: (data: PaymentVerifyPayload) =>
+      request<{ message: string; order_number: string; order_id: number }>('/payments/razorpay/verify', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
   },
 
-  // AI
   ai: {
-    tryon: (data: any) =>
-      request<any>('/ai/tryon', {
+    tryon: (data: JsonMap) =>
+      request<JsonMap>('/ai/tryon', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    voiceSearch: (data: any) =>
-      request<any>('/ai/voice-search', {
+    voiceSearch: (data: JsonMap) =>
+      request<JsonMap>('/ai/voice-search', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
-    recommend: () => request<any>('/ai/recommend'),
+    recommend: () => request<{ items: Product[] }>('/ai/recommend'),
   },
 
-  // Admin
   admin: {
-    dashboard: () =>
-      request<any>('/admin/dashboard', {
-        method: 'POST',
-      }),
-    products: (data?: any) =>
-      request<any>('/admin/products', {
-        method: 'POST',
-        body: data ? JSON.stringify(data) : undefined,
+    dashboard: () => request<AdminDashboardResponse>('/admin/dashboard'),
+    products: () => request<PaginatedResponse<Product>>('/admin/products'),
+    orders: () => request<{ items: Order[]; total: number }>('/admin/orders'),
+    inventory: () => request<JsonMap[]>('/admin/inventory'),
+    customers: () => request<JsonMap[]>('/admin/customers'),
+    reports: () => request<JsonMap>('/admin/reports'),
+    unsold: () => request<UnsoldResponse>('/admin/unsold-alerts'),
+    updateOrderStatus: (orderId: number, data: JsonMap) =>
+      request<Order>(`/admin/orders/${orderId}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
       }),
   },
 
-  // Addresses
   addresses: {
-    list: () => request<any[]>('/addresses'),
-    create: (data: any) =>
-      request<any>('/addresses', {
+    list: () => request<Address[]>('/addresses'),
+    create: (data: Address) =>
+      request<Address>('/addresses', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+  },
+
+  wishlist: {
+    list: () => request<WishlistApiItem[]>('/wishlist'),
+    toggle: (product_id: number) =>
+      request<{ in_wishlist: boolean; item?: WishlistApiItem }>('/wishlist', {
+        method: 'POST',
+        body: JSON.stringify({ product_id }),
+      }),
+  },
+
+  loyalty: {
+    balance: () => request<JsonMap>('/loyalty/balance'),
+    history: () => request<JsonMap[]>('/loyalty/history'),
+    rewards: () => request<JsonMap[]>('/loyalty/rewards'),
+    redeem: (rewardId: number) => request<JsonMap>(`/loyalty/redeem/${rewardId}`, { method: 'POST' }),
+  },
+
+  notifications: {
+    list: () => request<JsonMap[]>('/notifications'),
+    markRead: () => request<JsonMap>('/notifications', { method: 'PATCH' }),
   },
 };
+
+export { normalizeProduct };

@@ -11,7 +11,7 @@ async def test_health(client):
 
 @pytest.mark.asyncio
 async def test_list_products_empty(client):
-    resp = await client.get("/api/v1/products")
+    resp = await client.get("/api/products")
     assert resp.status_code == 200
     data = resp.json()
     assert "items" in data
@@ -21,7 +21,7 @@ async def test_list_products_empty(client):
 @pytest.mark.asyncio
 async def test_create_product_requires_admin(client, user_token):
     resp = await client.post(
-        "/api/v1/products",
+        "/api/products",
         json={
             "sku": "CSM-KAN-001",
             "name": "Royal Kanjivaram Gold Zari",
@@ -40,7 +40,7 @@ async def test_create_product_requires_admin(client, user_token):
 @pytest.mark.asyncio
 async def test_create_product_as_admin(client, admin_token):
     resp = await client.post(
-        "/api/v1/products",
+        "/api/products",
         json={
             "sku": "CSM-KAN-001",
             "name": "Royal Kanjivaram Gold Zari",
@@ -66,7 +66,7 @@ async def test_create_product_as_admin(client, admin_token):
 async def test_get_product_by_slug(client, admin_token):
     # Create product first
     await client.post(
-        "/api/v1/products",
+        "/api/products",
         json={
             "sku": "CSM-MEN-001", "name": "Pure Silk Dhoti Gold",
             "slug": "pure-silk-dhoti-gold", "category": "mens_dhoti",
@@ -74,20 +74,20 @@ async def test_get_product_by_slug(client, admin_token):
         },
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    resp = await client.get("/api/v1/products/pure-silk-dhoti-gold")
+    resp = await client.get("/api/products/pure-silk-dhoti-gold")
     assert resp.status_code == 200
     assert resp.json()["gender"] == "men"
 
 
 @pytest.mark.asyncio
 async def test_list_products_filter_gender(client):
-    resp = await client.get("/api/v1/products?gender=men")
+    resp = await client.get("/api/products?gender=men")
     assert resp.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_list_products_search(client):
-    resp = await client.get("/api/v1/products?search=Kanjivaram")
+    resp = await client.get("/api/products?search=Kanjivaram")
     assert resp.status_code == 200
     data = resp.json()
     for item in data["items"]:

@@ -207,14 +207,14 @@ async def seed():
     # Create tables first
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ Tables created")
+    print("[OK] Tables created")
 
     async with AsyncSessionLocal() as db:
         # Check if already seeded
         result = await db.execute(select(Product).limit(1))
         existing = result.scalar_one_or_none()
         if existing:
-            print(f"✅ DB already has products. Skipping seed (remove csm_silks.db to re-seed).")
+            print(f"[OK] DB already has products. Skipping seed (remove csm_silks.db to re-seed).")
             await db.close()
             return
 
@@ -248,7 +248,7 @@ async def seed():
         db.add(customer)
 
         await db.commit()
-        print(f"✅ Seeded {len(PRODUCTS)} products + admin/customer users!")
+        print(f"[OK] Seeded {len(PRODUCTS)} products + admin/customer users!")
         print(f"   Admin:    admin@csmsilks.com / admin123")
         print(f"   Customer: customer@example.com / customer123")
 

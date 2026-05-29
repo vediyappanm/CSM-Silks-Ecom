@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
+
+:root {
+  --ink: #17130f;
+  --ink-2: #221b16;
+  --ink-3: #30251d;
+  --page: #f7f3eb;
+  --surface: #fffdf8;
+  --surface-2: #efe7db;
+  --line: #dfd3c2;
+  --muted: #766a5c;
+  --soft: #a09382;
+  --gold: #b9842e;
+  --gold-2: #e2b75d;
+  --ruby: #842033;
+  --ruby-2: #b43a4d;
+  --green: #0c604f;
+  --green-2: #17836b;
+  --indigo: #263757;
+  --blue: #2f5f9f;
+  --danger: #bd2d36;
+  --success: #0f7a53;
+  --admin-bg: #11100e;
+  --admin-panel: #191612;
+  --admin-panel-2: #211d18;
+  --admin-line: rgba(255, 255, 255, .1);
+  --admin-text: #f7f3eb;
+  --admin-muted: rgba(247, 243, 235, .62);
+  --radius: 8px;
+  --shadow: 0 18px 44px rgba(43, 27, 10, .12);
+  --font-body: 'DM Sans', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+
+  --cream: var(--surface);
+  --ncream: var(--surface-2);
+  --dcream: var(--line);
+  --crimson: var(--ruby);
+  --gold2: var(--gold-2);
+  --grn: var(--green);
+  --gd: rgba(185, 132, 46, .12);
+  --gb: rgba(185, 132, 46, .28);
+  --muted-old: var(--muted);
+  --display: var(--font-display);
+  --body: var(--font-body);
+  --acc: var(--font-display);
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --bg: var(--admin-bg);
+  --bg2: var(--admin-panel);
+  --bg3: var(--admin-panel-2);
+  --border: var(--admin-line);
+  --text: var(--admin-text);
+  --text2: var(--admin-muted);
+  --text3: rgba(247, 243, 235, .4);
+  --red: #ff6b70;
+  --orange: #f6a947;
+}

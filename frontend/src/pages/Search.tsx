@@ -1,74 +1,91 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { ArrowLeft, Search as SearchIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { ALL_PRODUCTS } from '@/lib/data';
-import { ProductCard } from '@/components/ProductCard';
+import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
+import { ProductCard } from '@/features/catalog/components/ProductCard';
+import { api } from '@/lib/api';
+import type { CatalogFacets, Product } from '@/types';
 
 export function Search() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Product[]>([]);
+  const [facets, setFacets] = useState<CatalogFacets | null>(null);
+  const [sort, setSort] = useState('popularity');
+  const [rating, setRating] = useState('');
+  const [maxPrice, setMaxPrice] = useState('');
+  const [inStock, setInStock] = useState(true);
 
-  const results = query.trim() === ''
-    ? ALL_PRODUCTS
-    : ALL_PRODUCTS.filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        p.cat.toLowerCase().includes(query.toLowerCase()) ||
-        p.tags.some(t => t.toLowerCase().includes(query.toLowerCase()))
-      );
+  useEffect(() => {
+    api.products.facets().then(setFacets).catch(() => setFacets(null));
+  }, []);
 
-  const chips = [
-    { label: '🪡 Kanjivaram', value: 'Kanjivaram' },
-    { label: '💍 Bridal', value: 'Bridal' },
-    { label: '👔 Men\'s Silk', value: 'Men' },
-    { label: '🎉 Festive', value: 'Festive' },
-    { label: '🕌 Dhoti', value: 'Dhoti' },
-    { label: '🌿 Daily', value: 'Daily' },
-  ];
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      api.products.search({
+        q: query.trim() || undefined,
+        sort,
+        rating,
+        max_price: maxPrice,
+        availability: inStock ? 'in_stock' : undefined,
+        per_page: 48,
+      })
+        .then(data => setResults(data.items))
+        .catch(() => setResults([]));
+    }, 180);
+    return () => window.clearTimeout(id);
+  }, [query, sort, rating, maxPrice, inStock]);
+
+  const chips = ['Kanjivaram', 'Bridal', 'Men', 'Festive', 'Dhoti', 'Daily'];
 
   return (
-    <div style={{ background: 'var(--cream)', minHeight: '100vh', padding: '28px 4vw' }}>
-      <div style={{ maxWidth: 900, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
-          <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--ink)' }}>←</button>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: 26, fontWeight: 800, color: 'var(--ink)' }}>Search</h1>
+    <div className="search-page">
+      <div className="search-shell">
+        <div className="search-top">
+          <button className="back-btn" onClick={() => navigate('/')} aria-label="Back home">
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <span>Store search</span>
+            <h1>Find the right textile fast</h1>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+
+        <div className="search-box">
+          <SearchIcon size={20} />
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search sarees, silk shirts, dhotis…"
-            style={{
-              flex: 1, padding: '13px 16px', background: 'var(--ncream)', border: '1px solid var(--dcream)',
-              borderRadius: 10, fontFamily: 'var(--body)', fontSize: 14, color: 'var(--ink)', outline: 'none'
-            }}
+            placeholder="Search sarees, silk shirts, dhotis..."
+            autoFocus
           />
-          <button
-            onClick={() => {}}
-            style={{ padding: '13px 20px', background: 'var(--gold)', color: '#000', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
-          >
-            Search
-          </button>
+          <button onClick={() => setQuery(query.trim())}>Search</button>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
-          {chips.map((chip, i) => (
-            <span
-              key={i}
-              onClick={() => setQuery(chip.value)}
-              style={{
-                padding: '6px 14px', borderRadius: 100, border: '1px solid var(--gb)',
-                background: 'var(--gd)', fontSize: 11, fontWeight: 600, color: 'var(--gold)', cursor: 'pointer'
-              }}
-            >
-              {chip.label}
-            </span>
+
+        <div className="quick-chips">
+          {chips.map((chip) => (
+            <button key={chip} onClick={() => setQuery(chip)}>{chip}</button>
           ))}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.5, textTransform: 'uppercase', color: 'rgba(13,11,8,.35)', marginBottom: 14 }}>
-          {query.trim() ? `${results.length} result${results.length !== 1 ? 's' : ''} for "${query}"` : `All Products (${results.length})`}
+
+        <div className="result-count">
+          {query.trim() ? `${results.length} result${results.length !== 1 ? 's' : ''} for "${query}"` : `All products (${results.length})`}
         </div>
+
+        <CatalogToolbar
+          facets={facets}
+          sort={sort}
+          rating={rating}
+          availability={inStock}
+          maxPrice={maxPrice}
+          onSort={setSort}
+          onRating={setRating}
+          onAvailability={setInStock}
+          onMaxPrice={setMaxPrice}
+        />
+
         <div className="pg">
-          {results.map(p => (
-            <ProductCard key={p.id} product={p} />
-          ))}
+          {results.map(product => <ProductCard key={product.id} product={product} />)}
         </div>
       </div>
     </div>

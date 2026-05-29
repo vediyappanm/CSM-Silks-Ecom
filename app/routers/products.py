@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models.product import Product, ProductCategory, ProductGender
 from app.models.user import User
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, ProductListResponse
-from app.utils.auth import get_current_admin, get_optional_user
+from app.utils.auth import get_current_admin
 
 router = APIRouter(prefix="/products", tags=["products"])
 
