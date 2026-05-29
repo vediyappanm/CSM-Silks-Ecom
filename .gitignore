@@ -2,10 +2,12 @@
 .env
 .secrets
 
-# Database
+# Databases
 *.db
 *.sqlite
 *.sqlite3
+csm_silks.db
+csm_silks_django.db
 
 # Python
 __pycache__/
@@ -22,22 +24,23 @@ build/
 venv/
 env/
 
-# Build artifacts
-dist/
+# Frontend
+frontend/node_modules/
 frontend/dist/
+
+# Build artifacts
 app/static/
 
-frontend/node_modules/
+# Generated QA and local runtime artifacts
+.playwright-mcp/
+csm-*.png
+*.log
+*.err
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
