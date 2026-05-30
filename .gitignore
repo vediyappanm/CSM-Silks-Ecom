@@ -33,8 +33,11 @@ app/static/
 
 # Generated QA and local runtime artifacts
 .playwright-mcp/
+.gstack/
 backend/media/
 csm-*.png
+qa-*.png
+login-snapshot.md
 *.log
 *.err
 

@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from analytics.audit import record_admin_audit
 from catalog.models import ProductVariant
 
 from .models import StockLedger, UnsoldAlert
@@ -51,6 +52,13 @@ class AdminInventoryView(APIView):
             reason=StockLedger.Reason.ADJUSTMENT,
             note=serializer.validated_data.get("note", ""),
             created_by=request.user,
+        )
+        record_admin_audit(
+            request,
+            action="inventory.adjust",
+            entity=variant,
+            summary=f"{variant.sku} stock adjusted by {delta}.",
+            metadata={"ledger_id": ledger.id, "quantity_delta": delta, "stock_qty": variant.stock_qty},
         )
         return Response(StockLedgerSerializer(ledger).data)
 

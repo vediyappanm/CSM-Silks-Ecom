@@ -3,12 +3,14 @@ from __future__ import annotations
 from datetime import timedelta
 import uuid
 
+from django.conf import settings
 from django.utils import timezone
 
 from notifications.models import Notification
 from orders.models import Order
 
 from .models import Shipment, ShipmentEvent
+from .shiprocket import ShiprocketClient, ShiprocketError, shiprocket_configured
 
 
 EVENT_COPY = {
@@ -102,6 +104,17 @@ def record_order_status_event(order: Order, *, status: str | None = None, note: 
     return record_tracking_event(order, event_status, description=note, location=location)
 
 
+def shipment_event_is_duplicate(shipment: Shipment, *, event_status: str, location: str = "", description: str = "") -> bool:
+    last_event = shipment.events.order_by("-happened_at", "-id").first()
+    if not last_event or last_event.status != event_status:
+        return False
+    if (last_event.location or "") != (location or ""):
+        return False
+    if description and (last_event.description or "") != description:
+        return False
+    return True
+
+
 def apply_shipment_update(shipment: Shipment, *, event_location: str = "", event_note: str = "") -> Order:
     order = shipment.order
     order.courier_name = shipment.provider
@@ -129,31 +142,32 @@ def apply_shipment_update(shipment: Shipment, *, event_location: str = "", event
     description = event_note or default_description
     if shipment.awb_number and shipment.awb_number not in description:
         description = f"{description} AWB: {shipment.awb_number}."
-    record_tracking_event(
-        order,
-        event_status,
-        title=default_title,
-        description=description,
-        location=event_location,
-        shipment=shipment,
-        raw_payload={
-            "provider": shipment.provider,
-            "awb_number": shipment.awb_number,
-            "tracking_url": shipment.tracking_url,
-            **(shipment.raw_payload or {}),
-        },
-    )
-    Notification.objects.create(
-        user=order.user,
-        title="Order tracking updated",
-        body=f"{order.order_number} is now {order.status.replace('_', ' ')}.",
-        notification_type="shipping",
-        data={"order_id": order.id, "order_number": order.order_number, "tracking_number": order.tracking_number},
-    )
+    if not shipment_event_is_duplicate(shipment, event_status=event_status, location=event_location, description=description):
+        record_tracking_event(
+            order,
+            event_status,
+            title=default_title,
+            description=description,
+            location=event_location,
+            shipment=shipment,
+            raw_payload={
+                "provider": shipment.provider,
+                "awb_number": shipment.awb_number,
+                "tracking_url": shipment.tracking_url,
+                **(shipment.raw_payload or {}),
+            },
+        )
+        Notification.objects.create(
+            user=order.user,
+            title="Order tracking updated",
+            body=f"{order.order_number} is now {order.status.replace('_', ' ')}.",
+            notification_type="shipping",
+            data={"order_id": order.id, "order_number": order.order_number, "tracking_number": order.tracking_number},
+        )
     return order
 
 
-def create_manual_label(order: Order, *, provider: str = "manual", shipping_charge=0) -> Shipment:
+def create_manual_label(order: Order, *, provider: str = "manual", shipping_charge=0, raw_payload: dict | None = None) -> Shipment:
     awb_number = f"CSM{timezone.now():%Y%m%d}{str(uuid.uuid4().int)[:8]}"
     shipment, _ = Shipment.objects.update_or_create(
         order=order,
@@ -163,7 +177,7 @@ def create_manual_label(order: Order, *, provider: str = "manual", shipping_char
             "tracking_url": f"https://track.csmsilks.local/{awb_number}",
             "status": Shipment.Status.CREATED,
             "shipping_charge": shipping_charge or 0,
-            "raw_payload": {"source": "manual_label", "provider": provider or "manual"},
+            "raw_payload": {"source": "manual_label", "provider": provider or "manual", **(raw_payload or {})},
         },
     )
     shipment.label_url = f"/api/admin/shipments/{shipment.id}/label"
@@ -171,6 +185,49 @@ def create_manual_label(order: Order, *, provider: str = "manual", shipping_char
     shipment.save(update_fields=["label_url", "manifest_url", "updated_at"])
     apply_shipment_update(shipment, event_note="Shipping label created and package is ready for handover.")
     return shipment
+
+
+def create_shipping_label(order: Order, *, provider: str = "", shipping_charge=0) -> Shipment:
+    requested_provider = (provider or settings.DEFAULT_COURIER_PROVIDER or "manual").strip().lower()
+    if requested_provider == "shiprocket":
+        if not shiprocket_configured():
+            return create_manual_label(
+                order,
+                provider="manual",
+                shipping_charge=shipping_charge,
+                raw_payload={"requested_provider": "shiprocket", "fallback_reason": "Shiprocket credentials are not configured"},
+            )
+        try:
+            data = ShiprocketClient().create_order(order)
+            awb_number = data.get("awb_number") or f"SR{timezone.now():%Y%m%d}{str(uuid.uuid4().int)[:8]}"
+            shipment, _ = Shipment.objects.update_or_create(
+                order=order,
+                defaults={
+                    "provider": data.get("provider") or "shiprocket",
+                    "awb_number": awb_number,
+                    "tracking_url": data.get("tracking_url") or f"https://shiprocket.co/tracking/{awb_number}",
+                    "label_url": data.get("label_url", ""),
+                    "manifest_url": data.get("manifest_url", ""),
+                    "status": Shipment.Status.CREATED,
+                    "shipping_charge": shipping_charge or order.shipping_amount,
+                    "raw_payload": {"source": "shiprocket", **(data.get("raw_payload") or {})},
+                },
+            )
+            if not shipment.label_url:
+                shipment.label_url = f"/api/admin/shipments/{shipment.id}/label"
+            if not shipment.manifest_url:
+                shipment.manifest_url = f"/api/admin/shipments/{shipment.id}/manifest"
+            shipment.save(update_fields=["label_url", "manifest_url", "updated_at"])
+            apply_shipment_update(shipment, event_note="Shiprocket label created and package is ready for handover.")
+            return shipment
+        except ShiprocketError as exc:
+            return create_manual_label(
+                order,
+                provider="manual",
+                shipping_charge=shipping_charge,
+                raw_payload={"requested_provider": "shiprocket", "fallback_reason": str(exc)},
+            )
+    return create_manual_label(order, provider=requested_provider or "manual", shipping_charge=shipping_charge)
 
 
 def render_label_text(shipment: Shipment) -> str:

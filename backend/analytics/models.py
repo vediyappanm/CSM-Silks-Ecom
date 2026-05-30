@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 
 from catalog.models import Product
 
@@ -21,3 +22,20 @@ class DailyReport(models.Model):
     email_sent = models.BooleanField(default=False)
     whatsapp_sent_flag = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AdminAuditLog(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    action = models.CharField(max_length=80, db_index=True)
+    entity_type = models.CharField(max_length=80, db_index=True)
+    entity_id = models.CharField(max_length=80, blank=True, db_index=True)
+    summary = models.CharField(max_length=255)
+    metadata = models.JSONField(default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.action} - {self.entity_type}:{self.entity_id}"

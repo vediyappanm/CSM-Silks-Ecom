@@ -9,11 +9,12 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from analytics.audit import record_admin_audit
 from .models import Order, ReturnRequest
 from .serializers import AdminOrderStatusSerializer, AdminOrderWorkflowSerializer, AdminReturnStatusSerializer, OrderCreateSerializer, OrderSerializer, ReturnCreateSerializer, ReturnSerializer
 from .services import create_order_from_cart
 from shipping.models import Shipment
-from shipping.services import apply_shipment_update, create_manual_label, record_order_status_event
+from shipping.services import apply_shipment_update, create_shipping_label, record_order_status_event
 
 
 def order_queryset():
@@ -40,6 +41,7 @@ def order_matches_phone(order: Order, phone: str) -> bool:
 class OrderTrackLookupView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "tracking"
 
     def get(self, request):
         identifier = (request.query_params.get("identifier") or "").strip()
@@ -164,6 +166,13 @@ class AdminOrderStatusView(APIView):
         order.save()
         if old_status != order.status:
             record_order_status_event(order)
+        record_admin_audit(
+            request,
+            action="order.status_update",
+            entity=order,
+            summary=f"{order.order_number} moved from {old_status} to {order.status}.",
+            metadata={"old_status": old_status, "new_status": order.status},
+        )
         return Response(OrderSerializer(order_queryset().get(id=order.id)).data)
 
 
@@ -180,7 +189,14 @@ class AdminOrderWorkflowView(APIView):
         provider = serializer.validated_data.get("provider", "manual")
 
         if action == "create_label":
-            create_manual_label(order, provider=provider)
+            shipment = create_shipping_label(order, provider=provider)
+            record_admin_audit(
+                request,
+                action="order.create_label",
+                entity=order,
+                summary=f"Shipping label created for {order.order_number}.",
+                metadata={"provider": shipment.provider, "awb_number": shipment.awb_number},
+            )
         elif action == "confirm":
             order.status = Order.Status.CONFIRMED
             order.confirmed_at = order.confirmed_at or timezone.now()
@@ -201,7 +217,7 @@ class AdminOrderWorkflowView(APIView):
         else:
             shipment = getattr(order, "shipment", None)
             if not shipment:
-                shipment = create_manual_label(order, provider=provider)
+                shipment = create_shipping_label(order, provider=provider)
             shipment_status = {
                 "pickup": Shipment.Status.PICKED_UP,
                 "in_transit": Shipment.Status.IN_TRANSIT,
@@ -216,6 +232,14 @@ class AdminOrderWorkflowView(APIView):
                 shipment.rto_reason = note or "Delivery attempt failed."
             shipment.save(update_fields=["status", "rto_reason", "updated_at"])
             apply_shipment_update(shipment, event_location=location, event_note=note)
+        if action != "create_label":
+            record_admin_audit(
+                request,
+                action=f"order.workflow.{action}",
+                entity=order,
+                summary=f"Workflow action {action} applied to {order.order_number}.",
+                metadata={"note": note, "location": location, "provider": provider},
+            )
         return Response(OrderSerializer(order_queryset().get(id=order.id)).data)
 
 
@@ -281,4 +305,11 @@ class AdminReturnDetailView(APIView):
             ret.order.status = Order.Status.DELIVERED
             ret.order.save(update_fields=["status", "updated_at"])
             record_order_status_event(ret.order, note="Return request rejected; order remains delivered.")
+        record_admin_audit(
+            request,
+            action="return.status_update",
+            entity=ret,
+            summary=f"Return {ret.id} for {ret.order.order_number} marked {ret.status}.",
+            metadata={"order_id": ret.order_id, "status": ret.status},
+        )
         return Response(ReturnSerializer(ret).data)

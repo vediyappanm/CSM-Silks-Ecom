@@ -222,6 +222,20 @@ export interface AdminShipment {
   updated_at: string;
 }
 
+export interface AdminAuditLog {
+  id: number;
+  user?: number | null;
+  user_name: string;
+  user_email?: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  ip_address?: string | null;
+  created_at: string;
+}
+
 export interface ReturnRequest {
   id: number;
   order: number;

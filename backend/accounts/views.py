@@ -26,7 +26,9 @@ User = get_user_model()
 
 
 def normalize_phone(phone: str) -> str:
-    return phone.strip().replace(" ", "")
+    raw = str(phone or "").strip()
+    digits = "".join(char for char in raw if char.isdigit())
+    return f"+{digits}" if raw.startswith("+") and digits else digits
 
 
 def token_payload(user) -> dict:
@@ -41,6 +43,7 @@ def token_payload(user) -> dict:
 class SendOTPView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = OTPRequestSerializer(data=request.data)
@@ -54,6 +57,7 @@ class SendOTPView(APIView):
 class VerifyOTPView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = OTPVerifySerializer(data=request.data)
@@ -83,6 +87,7 @@ class VerifyOTPView(APIView):
 class AdminLoginView(APIView):
     authentication_classes = []
     permission_classes = []
+    throttle_scope = "admin_login"
 
     def post(self, request):
         serializer = AdminLoginSerializer(data=request.data)

@@ -125,7 +125,10 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "ALLOWED_ORIGINS",
-        "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+        os.getenv(
+            "CORS_ALLOWED_ORIGINS",
+            "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+        ),
     ).split(",")
     if origin.strip()
 ]
@@ -143,6 +146,19 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": os.getenv("DRF_ANON_THROTTLE", "500/hour"),
+        "user": os.getenv("DRF_USER_THROTTLE", "5000/hour"),
+        "otp": os.getenv("DRF_OTP_THROTTLE", "5/minute"),
+        "admin_login": os.getenv("DRF_ADMIN_LOGIN_THROTTLE", "10/minute"),
+        "tracking": os.getenv("DRF_TRACKING_THROTTLE", "30/minute"),
+        "courier_webhook": os.getenv("DRF_COURIER_WEBHOOK_THROTTLE", "120/minute"),
+    },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
@@ -174,6 +190,17 @@ CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or REDIS_URL
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+
+SHIPROCKET_EMAIL = os.getenv("SHIPROCKET_EMAIL", "")
+SHIPROCKET_PASSWORD = os.getenv("SHIPROCKET_PASSWORD", "")
+SHIPROCKET_BASE_URL = os.getenv("SHIPROCKET_BASE_URL", "https://apiv2.shiprocket.in/v1/external")
+SHIPROCKET_WEBHOOK_SECRET = os.getenv("SHIPROCKET_WEBHOOK_SECRET", "")
+SHIPROCKET_PICKUP_LOCATION = os.getenv("SHIPROCKET_PICKUP_LOCATION", "Primary")
+SHIPROCKET_PACKAGE_LENGTH_CM = float(os.getenv("SHIPROCKET_PACKAGE_LENGTH_CM", "32"))
+SHIPROCKET_PACKAGE_BREADTH_CM = float(os.getenv("SHIPROCKET_PACKAGE_BREADTH_CM", "24"))
+SHIPROCKET_PACKAGE_HEIGHT_CM = float(os.getenv("SHIPROCKET_PACKAGE_HEIGHT_CM", "5"))
+SHIPROCKET_PACKAGE_WEIGHT_KG = float(os.getenv("SHIPROCKET_PACKAGE_WEIGHT_KG", "0.5"))
+DEFAULT_COURIER_PROVIDER = os.getenv("DEFAULT_COURIER_PROVIDER", "manual")
 
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
 OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))

@@ -10,6 +10,9 @@ from catalog.models import Product
 from inventory.models import UnsoldAlert
 from orders.models import Order, OrderItem
 
+from .models import AdminAuditLog
+from .serializers import AdminAuditLogSerializer
+
 User = get_user_model()
 
 
@@ -91,3 +94,11 @@ class AdminReportsView(APIView):
         revenue = Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0
         orders = Order.objects.count()
         return Response({"total_revenue": revenue, "total_orders": orders, "taxable_sales": taxable, "cgst": cgst, "sgst": sgst, "gst_total": cgst + sgst})
+
+
+class AdminAuditLogView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        logs = AdminAuditLog.objects.select_related("user").order_by("-created_at")[:100]
+        return Response(AdminAuditLogSerializer(logs, many=True).data)

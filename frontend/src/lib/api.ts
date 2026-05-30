@@ -1,5 +1,6 @@
 import type {
   Address,
+  AdminAuditLog,
   AdminProductQuickCreatePayload,
   AdminInventoryRow,
   AdminShipment,
@@ -288,6 +289,7 @@ export const api = {
       }),
     customers: () => request<JsonMap[]>('/admin/customers'),
     reports: () => request<JsonMap>('/admin/reports'),
+    auditLogs: () => request<AdminAuditLog[]>('/admin/audit-logs'),
     unsold: () => request<UnsoldResponse>('/admin/unsold-alerts'),
     updateOrderStatus: (orderId: number, data: JsonMap) =>
       request<Order>(`/admin/orders/${orderId}/status`, {

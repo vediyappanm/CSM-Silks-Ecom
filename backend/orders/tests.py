@@ -2,10 +2,12 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Address
+from analytics.models import AdminAuditLog
 from catalog.models import Category, Product, ProductVariant
 from inventory.models import StockReservation
 from notifications.models import Notification
@@ -167,6 +169,7 @@ class CheckoutFlowTests(TestCase):
         order = Order.objects.get(id=order_id)
         self.assertTrue(order.tracking_number.startswith("CSM"))
         self.assertTrue(order.shipment.label_url)
+        self.assertTrue(AdminAuditLog.objects.filter(action="order.create_label", entity_id=str(order.id)).exists())
 
         rto_resp = self.client.post(
             f"/api/admin/orders/{order_id}/workflow",
@@ -180,6 +183,43 @@ class CheckoutFlowTests(TestCase):
         label_download = self.client.get(f"/api/admin/shipments/{order.shipment.id}/label")
         self.assertEqual(label_download.status_code, 200)
         self.assertIn(order.order_number, label_download.content.decode())
+
+    @override_settings(SHIPROCKET_WEBHOOK_SECRET="testsecret")
+    def test_courier_webhook_updates_tracking_and_ignores_duplicate_event(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="webhook-admin", email="webhook@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+        self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "create_label", "provider": "manual"},
+            format="json",
+        )
+        order = Order.objects.get(id=order_id)
+        awb = order.shipment.awb_number
+
+        public_client = APIClient()
+        payload = {
+            "awb_code": awb,
+            "current_status": "Out For Delivery",
+            "location": "Chennai last-mile hub",
+            "remarks": "Package is with delivery partner.",
+        }
+        webhook_resp = public_client.post("/api/shipping/webhook", payload, format="json", HTTP_X_SHIPROCKET_WEBHOOK_SECRET="testsecret")
+        self.assertEqual(webhook_resp.status_code, 200)
+        order.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.OUT_FOR_DELIVERY)
+        self.assertTrue(ShipmentEvent.objects.filter(order=order, status=ShipmentEvent.Status.OUT_FOR_DELIVERY, location="Chennai last-mile hub").exists())
+        event_count = ShipmentEvent.objects.filter(order=order).count()
+
+        duplicate_resp = public_client.post("/api/shipping/webhook", payload, format="json", HTTP_X_SHIPROCKET_WEBHOOK_SECRET="testsecret")
+        self.assertEqual(duplicate_resp.status_code, 200)
+        self.assertEqual(ShipmentEvent.objects.filter(order=order).count(), event_count)
+        self.assertTrue(AdminAuditLog.objects.filter(action="shipping.webhook", entity_id=str(order.shipment.id)).exists())
+        audit_resp = self.client.get("/api/admin/audit-logs")
+        self.assertEqual(audit_resp.status_code, 200)
+        self.assertTrue(any(log["action"] == "shipping.webhook" for log in audit_resp.json()))
 
     def test_customer_can_download_invoice(self):
         self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")

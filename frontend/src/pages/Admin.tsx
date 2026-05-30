@@ -7,14 +7,15 @@ import {
   FileText,
   PackageCheck,
   RotateCcw,
+  ShieldCheck,
   ShoppingBag,
   Truck,
   Users,
 } from 'lucide-react';
 import { AdminCatalogManager } from '@/features/admin/components/AdminCatalogManager';
-import type { AdminInventoryRow, AdminShipment, Order, ReturnRequest, User } from '@/types';
+import type { AdminAuditLog, AdminInventoryRow, AdminShipment, Order, ReturnRequest, User } from '@/types';
 
-type AdminPage = 'dashboard' | 'orders' | 'products' | 'inventory' | 'shipments' | 'returns' | 'customers' | 'reports' | 'unsold';
+type AdminPage = 'dashboard' | 'orders' | 'products' | 'inventory' | 'shipments' | 'returns' | 'customers' | 'reports' | 'audit' | 'unsold';
 type Kpis = Record<string, number | string>;
 type AdminOrderRow = Partial<Order> & {
   id: number;
@@ -125,6 +126,7 @@ export function Admin() {
     { key: 'returns', label: 'Returns', icon: RotateCcw },
     { key: 'customers', label: 'Customers', icon: Users },
     { key: 'reports', label: 'Reports', icon: FileText },
+    { key: 'audit', label: 'Audit Logs', icon: ShieldCheck },
     { key: 'unsold', label: 'Stock Alerts', icon: AlertTriangle },
   ] as const;
 
@@ -160,6 +162,7 @@ export function Admin() {
           {page === 'returns' && <AdminReturns />}
           {page === 'customers' && <AdminCustomers />}
           {page === 'reports' && <AdminReports />}
+          {page === 'audit' && <AdminAuditLogs />}
           {page === 'unsold' && <AdminUnsold />}
         </div>
       </div>
@@ -511,6 +514,39 @@ function AdminReports() {
           <div className="kpi-value">Rs {Number(value).toLocaleString('en-IN')}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AdminAuditLogs() {
+  const [logs, setLogs] = useState<AdminAuditLog[]>([]);
+  useEffect(() => { api.admin.auditLogs().then(setLogs).catch(() => setLogs([])); }, []);
+  return (
+    <div className="admin-stack">
+      <div className="admin-panel-head">
+        <div>
+          <span className="admin-eyebrow">Traceability</span>
+          <h2>Admin audit trail</h2>
+          <p>Operational changes from order workflow, stock adjustments, returns, shipment edits, and courier webhooks.</p>
+        </div>
+      </div>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Summary</th><th>IP</th></tr></thead>
+          <tbody>
+            {logs.map(log => (
+              <tr key={log.id}>
+                <td>{new Date(log.created_at).toLocaleString('en-IN')}</td>
+                <td>{log.user_name}<span className="admin-muted-line">{log.user_email || 'system event'}</span></td>
+                <td><span className="status-badge st-shipped">{log.action}</span></td>
+                <td>{log.entity_type}<span className="admin-muted-line">#{log.entity_id || '-'}</span></td>
+                <td>{log.summary}</td>
+                <td>{log.ip_address || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
