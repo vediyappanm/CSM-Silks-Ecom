@@ -4,6 +4,7 @@ import random
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
+from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status
@@ -21,6 +22,7 @@ from .serializers import (
     OTPVerifySerializer,
     UserSerializer,
 )
+from .sms import SMSDeliveryError, send_otp_sms, twilio_configured
 
 User = get_user_model()
 
@@ -51,7 +53,19 @@ class SendOTPView(APIView):
         phone = normalize_phone(serializer.validated_data["phone"])
         otp = f"{random.randint(100000, 999999)}"
         OTPChallenge.objects.create(phone=phone, otp_hash=make_password(otp), expires_at=OTPChallenge.expiry_time())
-        return Response({"message": "OTP sent", "dev_otp": otp})
+        response = {"message": "OTP sent", "sms_sent": False}
+        if twilio_configured():
+            try:
+                sms_result = send_otp_sms(phone=phone, otp=otp)
+                response["sms_sent"] = True
+                response["sms_id"] = sms_result.get("sid", "")
+            except SMSDeliveryError as exc:
+                if not settings.DEBUG:
+                    return Response({"detail": "Unable to send OTP right now"}, status=status.HTTP_502_BAD_GATEWAY)
+                response["sms_error"] = str(exc)
+        if settings.DEBUG:
+            response["dev_otp"] = otp
+        return Response(response)
 
 
 class VerifyOTPView(APIView):

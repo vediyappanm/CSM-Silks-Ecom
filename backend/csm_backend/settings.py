@@ -213,5 +213,13 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
 NOTIFICATION_EMAIL_ENABLED = os.getenv("NOTIFICATION_EMAIL_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
 
+SMS_OTP_ENABLED = os.getenv("SMS_OTP_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_API_KEY_SID = os.getenv("TWILIO_API_KEY_SID", "")
+TWILIO_API_KEY_SECRET = os.getenv("TWILIO_API_KEY_SECRET", "")
+TWILIO_FROM_PHONE = os.getenv("TWILIO_FROM_PHONE", "")
+TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
+
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
 OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))
