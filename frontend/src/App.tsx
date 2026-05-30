@@ -39,6 +39,7 @@ function AppLayout() {
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/orders" element={<Orders />} />
+          <Route path="/tracking" element={<Tracking />} />
           <Route path="/tracking/:orderId" element={<Tracking />} />
           <Route path="/account" element={<Account />} />
           <Route path="/search" element={<Search />} />

@@ -11,6 +11,7 @@ from inventory.models import StockReservation
 from notifications.models import Notification
 from orders.pricing import calculate_gst, calculate_loyalty_points
 from orders.models import Order
+from shipping.models import ShipmentEvent
 
 User = get_user_model()
 
@@ -52,6 +53,7 @@ class CheckoutFlowTests(TestCase):
         body = order_resp.json()
         self.assertEqual(body["status"], "confirmed")
         self.assertEqual(len(body["items"]), 1)
+        self.assertTrue(ShipmentEvent.objects.filter(order_id=body["id"], status=ShipmentEvent.Status.ORDER_PLACED).exists())
 
         self.variant.refresh_from_db()
         self.assertEqual(self.variant.stock_qty, 1)
@@ -105,6 +107,8 @@ class CheckoutFlowTests(TestCase):
                 "awb_number": "AWB123",
                 "tracking_url": "https://track.example.com/AWB123",
                 "status": "delivered",
+                "event_location": "Kanchipuram hub",
+                "event_note": "Delivered to customer.",
             },
             format="json",
         )
@@ -112,7 +116,39 @@ class CheckoutFlowTests(TestCase):
         order = Order.objects.get(id=order_id)
         self.assertEqual(order.status, Order.Status.DELIVERED)
         self.assertEqual(order.tracking_number, "AWB123")
+        self.assertTrue(ShipmentEvent.objects.filter(order=order, status=ShipmentEvent.Status.DELIVERED, location="Kanchipuram hub").exists())
         self.assertTrue(Notification.objects.filter(user=self.user, notification_type="shipping").exists())
+
+        detail_resp = self.client.get(f"/api/admin/orders?status={Order.Status.DELIVERED}")
+        tracking_events = detail_resp.json()["items"][0]["tracking_events"]
+        self.assertTrue(any(event["status"] == ShipmentEvent.Status.DELIVERED for event in tracking_events))
+
+    def test_public_tracking_lookup_requires_order_or_awb_and_phone_match(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="shipment-admin", email="ship@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+        self.client.post(
+            "/api/admin/shipments",
+            {
+                "order": order_id,
+                "provider": "manual",
+                "awb_number": "AWB-PUBLIC-1",
+                "tracking_url": "https://track.example.com/AWB-PUBLIC-1",
+                "status": "in_transit",
+            },
+            format="json",
+        )
+
+        public_client = APIClient()
+        by_order = public_client.get(f"/api/orders/track?identifier={order_resp.json()['order_number']}&phone=+918888888888")
+        self.assertEqual(by_order.status_code, 200)
+        self.assertEqual(by_order.json()["tracking_number"], "AWB-PUBLIC-1")
+        self.assertTrue(any(event["status"] == ShipmentEvent.Status.IN_TRANSIT for event in by_order.json()["tracking_events"]))
+
+        wrong_phone = public_client.get(f"/api/orders/track?identifier=AWB-PUBLIC-1&phone=+919999999999")
+        self.assertEqual(wrong_phone.status_code, 404)
 
 
 class ProductApiTests(TestCase):

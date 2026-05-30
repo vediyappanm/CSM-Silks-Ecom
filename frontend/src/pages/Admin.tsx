@@ -296,7 +296,7 @@ function AdminInventory() {
 function AdminShipments() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [shipments, setShipments] = useState<AdminShipment[]>([]);
-  const [form, setForm] = useState({ order: '', provider: 'manual', awb_number: '', tracking_url: '', status: 'created' as AdminShipment['status'] });
+  const [form, setForm] = useState({ order: '', provider: 'manual', awb_number: '', tracking_url: '', status: 'created' as AdminShipment['status'], event_location: '', event_note: '' });
   const [notice, setNotice] = useState('');
 
   const load = () => {
@@ -323,9 +323,11 @@ function AdminShipments() {
       awb_number: form.awb_number,
       tracking_url: form.tracking_url,
       status: form.status,
+      event_location: form.event_location,
+      event_note: form.event_note,
     });
     setNotice(`${shipment.order_number} shipment saved.`);
-    setForm(prev => ({ ...prev, awb_number: '', tracking_url: '' }));
+    setForm(prev => ({ ...prev, event_location: '', event_note: '' }));
     load();
   };
 
@@ -352,6 +354,8 @@ function AdminShipments() {
               <option value="failed">Failed</option>
             </select>
           </label>
+          <label className="admin-field">Current location<input value={form.event_location} onChange={e => setForm({ ...form, event_location: e.target.value })} placeholder="Kanchipuram hub" /></label>
+          <label className="admin-field wide">Customer update note<input value={form.event_note} onChange={e => setForm({ ...form, event_note: e.target.value })} placeholder="Package handed to courier / reached Chennai hub" /></label>
         </div>
         {notice && <div className="admin-alert good">{notice}</div>}
         <button className="admin-primary-btn admin-submit" onClick={() => void saveShipment()}>Save shipment</button>
@@ -364,6 +368,9 @@ function AdminShipments() {
               <div>
                 <strong>{shipment.order_number}</strong>
                 <span>{shipment.provider} / {shipment.awb_number || 'No AWB'} / {shipment.status}</span>
+                {shipment.events?.length ? (
+                  <span className="admin-muted-line">{shipment.events[shipment.events.length - 1].title} - {shipment.events[shipment.events.length - 1].location || 'location pending'}</span>
+                ) : null}
               </div>
               <span className={`status-badge ${shipment.status === 'delivered' ? 'st-delivered' : 'st-shipped'}`}>{shipment.status}</span>
             </div>

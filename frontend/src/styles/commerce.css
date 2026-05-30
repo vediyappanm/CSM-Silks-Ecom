@@ -662,7 +662,73 @@
 .tracking-wrap { max-width: 860px; }
 .track-header,
 .track-status-card,
-.track-timeline { padding: 18px; margin-bottom: 14px; }
+.track-timeline,
+.track-lookup-card,
+.track-empty { padding: 18px; margin-bottom: 14px; }
+.track-lookup-card,
+.track-empty {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.track-lookup-card h1 {
+  margin: 4px 0 6px;
+  font-family: var(--font-display);
+  font-size: 34px;
+}
+.track-lookup-card p,
+.track-error { color: var(--muted); font-size: 13px; }
+.track-kicker {
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.track-lookup-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 16px;
+}
+.track-lookup-grid label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.track-lookup-grid input {
+  height: 42px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  outline: 0;
+}
+.track-error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-weight: 900;
+}
+.track-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.track-empty h2 {
+  font-family: var(--font-display);
+  font-size: 26px;
+}
+.track-empty-mark {
+  color: var(--gold);
+  font-size: 48px;
+  font-weight: 900;
+}
 .track-id-row,
 .track-prod-row,
 .tl-item,
@@ -721,6 +787,7 @@
   .payment-opts,
   .address-pills,
   .form-row,
+  .track-lookup-grid,
   .rewards-grid { grid-template-columns: 1fr; }
   .order-summary { position: static; }
   .catalog-hero h1,

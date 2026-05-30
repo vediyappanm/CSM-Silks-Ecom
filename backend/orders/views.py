@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -10,6 +11,7 @@ from rest_framework.views import APIView
 from .models import Order, ReturnRequest
 from .serializers import AdminOrderStatusSerializer, AdminReturnStatusSerializer, OrderCreateSerializer, OrderSerializer, ReturnCreateSerializer, ReturnSerializer
 from .services import create_order_from_cart
+from shipping.services import record_order_status_event
 
 
 def order_queryset():
@@ -18,7 +20,35 @@ def order_queryset():
         "items__product__variants",
         "items__product__images",
         "items__variant",
+        "tracking_events",
     )
+
+
+def normalize_phone(phone: str) -> str:
+    return "".join(char for char in str(phone or "") if char.isdigit())
+
+
+def order_matches_phone(order: Order, phone: str) -> bool:
+    normalized = normalize_phone(phone)
+    snapshot_phone = normalize_phone((order.shipping_address_snapshot or {}).get("phone", ""))
+    user_phone = normalize_phone(getattr(order.user, "phone", ""))
+    return normalized and normalized in {snapshot_phone, user_phone}
+
+
+class OrderTrackLookupView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        identifier = (request.query_params.get("identifier") or "").strip()
+        phone = normalize_phone(request.query_params.get("phone", ""))
+        if not identifier or not phone:
+            return Response({"detail": "Order number/AWB and phone are required"}, status=status.HTTP_400_BAD_REQUEST)
+        candidates = order_queryset().filter(Q(order_number__iexact=identifier) | Q(tracking_number__iexact=identifier))[:20]
+        for order in candidates:
+            if order_matches_phone(order, phone):
+                return Response(OrderSerializer(order).data)
+        return Response({"detail": "No matching order found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 class OrderListCreateView(APIView):
@@ -55,6 +85,7 @@ class OrderCancelView(APIView):
             return Response({"detail": f"Cannot cancel order in {order.status} status"}, status=status.HTTP_400_BAD_REQUEST)
         order.status = Order.Status.CANCELLED
         order.save(update_fields=["status", "updated_at"])
+        record_order_status_event(order, note="The order was cancelled before fulfillment.")
         return Response(OrderSerializer(order_queryset().get(id=order.id)).data)
 
 
@@ -84,6 +115,8 @@ class AdminOrderStatusView(APIView):
         if order.status == Order.Status.DELIVERED and old_status != Order.Status.DELIVERED:
             order.delivered_at = timezone.now()
         order.save()
+        if old_status != order.status:
+            record_order_status_event(order)
         return Response(OrderSerializer(order_queryset().get(id=order.id)).data)
 
 
@@ -106,6 +139,7 @@ class ReturnListCreateView(APIView):
         )
         order.status = Order.Status.RETURN_INITIATED
         order.save(update_fields=["status", "updated_at"])
+        record_order_status_event(order, note="Return request raised from customer orders page.")
         return Response(ReturnSerializer(ret).data, status=status.HTTP_201_CREATED)
 
 
@@ -129,10 +163,13 @@ class AdminReturnDetailView(APIView):
         if ret.status == ReturnRequest.Status.REFUNDED:
             ret.order.status = Order.Status.REFUNDED
             ret.order.save(update_fields=["status", "updated_at"])
+            record_order_status_event(ret.order, note="Refund has been recorded by admin.")
         elif ret.status == ReturnRequest.Status.APPROVED:
             ret.order.status = Order.Status.RETURN_INITIATED
             ret.order.save(update_fields=["status", "updated_at"])
+            record_order_status_event(ret.order, note="Return request approved by admin.")
         elif ret.status == ReturnRequest.Status.REJECTED and ret.order.status == Order.Status.RETURN_INITIATED:
             ret.order.status = Order.Status.DELIVERED
             ret.order.save(update_fields=["status", "updated_at"])
+            record_order_status_event(ret.order, note="Return request rejected; order remains delivered.")
         return Response(ReturnSerializer(ret).data)

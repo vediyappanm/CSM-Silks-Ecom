@@ -8,11 +8,13 @@ from .views import (
     OrderCancelView,
     OrderDetailView,
     OrderListCreateView,
+    OrderTrackLookupView,
     ReturnListCreateView,
 )
 
 urlpatterns = [
     path("orders", OrderListCreateView.as_view()),
+    path("orders/track", OrderTrackLookupView.as_view()),
     path("orders/<int:order_id>", OrderDetailView.as_view()),
     path("orders/<int:order_id>/cancel", OrderCancelView.as_view()),
     path("returns", ReturnListCreateView.as_view()),

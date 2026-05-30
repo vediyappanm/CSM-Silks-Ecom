@@ -156,6 +156,17 @@ export interface OrderItem {
   subtotal: number | string;
 }
 
+export interface TrackingEvent {
+  id: number;
+  status: string;
+  title: string;
+  description: string;
+  location?: string;
+  happened_at: string;
+  raw_payload?: Record<string, unknown>;
+  created_at?: string;
+}
+
 export interface Order {
   id: number;
   order_number: string;
@@ -177,6 +188,7 @@ export interface Order {
   confirmed_at?: string;
   shipped_at?: string;
   delivered_at?: string;
+  tracking_events?: TrackingEvent[];
   items: OrderItem[];
 }
 
@@ -201,6 +213,7 @@ export interface AdminShipment {
   tracking_url: string;
   status: 'created' | 'picked_up' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed';
   raw_payload?: Record<string, unknown>;
+  events?: TrackingEvent[];
   created_at: string;
   updated_at: string;
 }

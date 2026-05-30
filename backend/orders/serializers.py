@@ -41,6 +41,7 @@ class OrderSerializer(serializers.ModelSerializer):
     gst_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     payment_status = serializers.SerializerMethodField()
     tracking_url = serializers.SerializerMethodField()
+    tracking_events = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -62,6 +63,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "tracking_number",
             "courier_url",
             "tracking_url",
+            "tracking_events",
             "estimated_delivery",
             "shipping_address_snapshot",
             "loyalty_points_earned",
@@ -79,6 +81,67 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_tracking_url(self, obj: Order) -> str:
         return obj.courier_url
+
+    def get_tracking_events(self, obj: Order) -> list[dict]:
+        from shipping.models import ShipmentEvent
+        from shipping.serializers import ShipmentEventSerializer
+
+        events = list(obj.tracking_events.all())
+        if events:
+            return ShipmentEventSerializer(events, many=True).data
+
+        fallback = [
+            {
+                "id": 0,
+                "status": ShipmentEvent.Status.ORDER_PLACED,
+                "title": "Order placed",
+                "description": "Your order was created successfully.",
+                "location": "",
+                "happened_at": obj.created_at,
+                "raw_payload": {},
+                "created_at": obj.created_at,
+            }
+        ]
+        if obj.confirmed_at:
+            fallback.append(
+                {
+                    "id": 0,
+                    "status": ShipmentEvent.Status.CONFIRMED,
+                    "title": "Order confirmed",
+                    "description": "Payment/order confirmation is complete.",
+                    "location": "",
+                    "happened_at": obj.confirmed_at,
+                    "raw_payload": {},
+                    "created_at": obj.confirmed_at,
+                }
+            )
+        if obj.shipped_at:
+            fallback.append(
+                {
+                    "id": 0,
+                    "status": ShipmentEvent.Status.IN_TRANSIT,
+                    "title": "In transit",
+                    "description": "The package is moving through the courier network.",
+                    "location": "",
+                    "happened_at": obj.shipped_at,
+                    "raw_payload": {},
+                    "created_at": obj.shipped_at,
+                }
+            )
+        if obj.delivered_at:
+            fallback.append(
+                {
+                    "id": 0,
+                    "status": ShipmentEvent.Status.DELIVERED,
+                    "title": "Delivered",
+                    "description": "The package has been delivered.",
+                    "location": "",
+                    "happened_at": obj.delivered_at,
+                    "raw_payload": {},
+                    "created_at": obj.delivered_at,
+                }
+            )
+        return fallback
 
 
 class AdminOrderStatusSerializer(serializers.Serializer):

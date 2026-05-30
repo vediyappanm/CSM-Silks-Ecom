@@ -144,6 +144,14 @@ def create_order_from_cart(user, address_id: int, coupon_code: str = "", loyalty
         notification_type="order",
         data={"order_id": order.id, "order_number": order.order_number},
     )
+    from shipping.models import ShipmentEvent
+    from shipping.services import record_tracking_event
+
+    record_tracking_event(order, ShipmentEvent.Status.ORDER_PLACED)
+    record_tracking_event(
+        order,
+        ShipmentEvent.Status.CONFIRMED if status == Order.Status.CONFIRMED else ShipmentEvent.Status.PAYMENT_PENDING,
+    )
     cart.items.all().delete()
     cart.coupon_code = ""
     cart.save(update_fields=["coupon_code", "updated_at"])
@@ -169,6 +177,10 @@ def confirm_paid_order(order: Order) -> Order:
     order.status = Order.Status.CONFIRMED
     order.confirmed_at = timezone.now()
     order.save(update_fields=["status", "confirmed_at", "updated_at"])
+    from shipping.models import ShipmentEvent
+    from shipping.services import record_tracking_event
+
+    record_tracking_event(order, ShipmentEvent.Status.CONFIRMED, description="Payment captured and order confirmed.")
     user = order.user
     user.loyalty_points += order.loyalty_points_earned
     user.save(update_fields=["loyalty_points"])

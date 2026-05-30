@@ -9,6 +9,8 @@ from rest_framework.views import APIView
 
 from orders.models import Order
 from orders.services import confirm_paid_order
+from shipping.models import ShipmentEvent
+from shipping.services import record_tracking_event
 
 from .models import Payment, RazorpayWebhookEvent
 from .serializers import RazorpayOrderCreateSerializer, RazorpayVerifySerializer, RefundSerializer
@@ -93,6 +95,7 @@ class RazorpayWebhookView(APIView):
         elif payment and event_type == "payment.failed":
             payment.status = Payment.Status.FAILED
             payment.save(update_fields=["status", "updated_at"])
+            record_tracking_event(payment.order, ShipmentEvent.Status.PAYMENT_PENDING, description="Payment failed. Customer can retry checkout.")
 
         event.processed_at = timezone.now()
         event.save(update_fields=["processed_at"])
@@ -112,5 +115,6 @@ class RefundView(APIView):
         payment.refund_id = f"refund_dev_{payment.id}"
         payment.order.status = Order.Status.REFUNDED
         payment.order.save(update_fields=["status", "updated_at"])
+        record_tracking_event(payment.order, ShipmentEvent.Status.REFUNDED, description="Refund has been recorded by admin.")
         payment.save()
         return Response({"message": "Refund recorded", "refund_id": payment.refund_id})

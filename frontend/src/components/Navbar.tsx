@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bell, Heart, Home, MapPin, Menu, Search, Shirt, ShoppingBag, Sparkles, UserRound, X } from 'lucide-react';
+import { Bell, Heart, Home, MapPin, Menu, Search, Shirt, ShoppingBag, Sparkles, Truck, UserRound, X } from 'lucide-react';
 import { BrandMark } from '@/ui/components';
 import { useApp } from '@/store/AppContext';
 
@@ -22,6 +22,7 @@ export function Navbar() {
     { path: '/womens', label: 'Women', icon: Sparkles },
     { path: '/mens', label: 'Men', icon: Shirt },
     { path: '/search', label: 'Search', icon: Search },
+    { path: '/tracking', label: 'Track', icon: Truck },
   ];
 
   const submitSearch = (event: FormEvent) => {

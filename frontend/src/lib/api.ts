@@ -177,6 +177,8 @@ export const api = {
   orders: {
     list: () => request<PaginatedResponse<Order>>('/orders'),
     get: (orderId: string | number) => request<Order>(`/orders/${orderId}`),
+    track: (identifier: string, phone: string) =>
+      request<Order>(`/orders/track?identifier=${encodeURIComponent(identifier)}&phone=${encodeURIComponent(phone)}`),
     create: (data: { address_id: number; coupon_code?: string; loyalty_points_to_use?: number; payment_method?: 'cod' | 'razorpay' }) =>
       request<Order>('/orders', {
         method: 'POST',
@@ -256,7 +258,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     shipments: () => request<AdminShipment[]>('/admin/shipments'),
-    createShipment: (data: { order: number; provider: string; awb_number?: string; tracking_url?: string; status?: AdminShipment['status']; raw_payload?: JsonMap }) =>
+    createShipment: (data: { order: number; provider: string; awb_number?: string; tracking_url?: string; status?: AdminShipment['status']; raw_payload?: JsonMap; event_location?: string; event_note?: string }) =>
       request<AdminShipment>('/admin/shipments', {
         method: 'POST',
         body: JSON.stringify(data),

@@ -106,7 +106,7 @@ export function Orders() {
                 <div className="oc-price">Rs {Number(o.total_amount).toLocaleString('en-IN')}</div>
               </div>
               <div className="oc-actions">
-                {o.status === 'shipped' && (
+                {['shipped', 'out_for_delivery', 'delivered'].includes(o.status) && (
                   <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }}>
                     Track Order
                   </button>
