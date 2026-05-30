@@ -58,3 +58,29 @@ class NotificationEmailTests(TestCase):
             notification_type="order",
         )
         self.assertFalse(Notification.objects.get(id=notification.id).email_sent)
+
+    @override_settings(
+        WHATSAPP_ENABLED=True,
+        GUPSHUP_API_KEY="test_gupshup_key",
+        GUPSHUP_SOURCE_PHONE="917000000000",
+        GUPSHUP_APP_NAME="CSMSilks",
+    )
+    @patch("notifications.services.urlopen", return_value=_FakeResendResponse())
+    def test_notification_whatsapp_is_sent_through_gupshup(self, _urlopen):
+        user = User.objects.create_user(
+            username="+919800001111",
+            phone="+919800001111",
+            password="customer123",
+            is_verified=True,
+        )
+
+        notification = create_notification(
+            user=user,
+            title="Tracking update",
+            body="Your package is out for delivery.",
+            notification_type="shipping",
+        )
+
+        notification.refresh_from_db()
+        self.assertTrue(notification.wa_sent)
+        self.assertEqual(notification.data["whatsapp_provider"], "gupshup")

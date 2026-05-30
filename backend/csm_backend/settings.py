@@ -221,5 +221,10 @@ TWILIO_API_KEY_SECRET = os.getenv("TWILIO_API_KEY_SECRET", "")
 TWILIO_FROM_PHONE = os.getenv("TWILIO_FROM_PHONE", "")
 TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID", "")
 
+WHATSAPP_ENABLED = os.getenv("WHATSAPP_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
+GUPSHUP_API_KEY = os.getenv("GUPSHUP_API_KEY", "")
+GUPSHUP_SOURCE_PHONE = os.getenv("GUPSHUP_SOURCE_PHONE", "")
+GUPSHUP_APP_NAME = os.getenv("GUPSHUP_APP_NAME", "")
+
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
 OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))
