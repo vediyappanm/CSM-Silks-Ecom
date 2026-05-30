@@ -38,6 +38,7 @@ backend/media/
 csm-*.png
 qa-*.png
 login-snapshot.md
+current-login-state.md
 *.log
 *.err
 
