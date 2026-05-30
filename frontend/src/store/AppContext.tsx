@@ -10,6 +10,7 @@ interface AppState {
   cartCount: number;
   user: User | null;
   isAuthed: boolean;
+  couponCode: string;
 }
 
 interface AppContextType extends AppState {
@@ -20,6 +21,7 @@ interface AppContextType extends AppState {
   isInWishlist: (id: number) => boolean;
   showToast: (icon: string, title: string, msg: string) => void;
   clearCart: () => Promise<void>;
+  applyCoupon: (couponCode: string) => Promise<void>;
   getCartTotals: () => CartTotals;
   refreshSession: () => Promise<void>;
   logout: () => Promise<void>;
@@ -42,6 +44,17 @@ function cartFromResponse(data: CartResponse): CartItem[] {
   }));
 }
 
+function totalsFromResponse(data: CartResponse): CartTotals {
+  return {
+    subtotal: toNumber(data.subtotal),
+    discount: toNumber(data.discount),
+    cgst: toNumber(data.cgst),
+    sgst: toNumber(data.sgst),
+    shipping: toNumber(data.shipping),
+    total: toNumber(data.total),
+  };
+}
+
 function variantId(product: Product) {
   return product.variant_id || product.default_variant_id || product.variants?.[0]?.id;
 }
@@ -51,6 +64,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [serverTotals, setServerTotals] = useState<CartTotals | null>(null);
+  const [couponCode, setCouponCode] = useState('');
 
   const showToast = useCallback((icon: string, title: string, msg: string) => {
     setToast({ icon, title, msg, id: Date.now() });
@@ -66,22 +81,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
         api.tokens.clearTokens();
         setUser(null);
         setCart([]);
+        setServerTotals(null);
+        setCouponCode('');
         setWishlist([]);
         return;
       }
       if (me.role === 'admin' || me.role === 'super_admin') {
         setCart([]);
+        setServerTotals(null);
+        setCouponCode('');
         setWishlist([]);
         return;
       }
       const cartData = await api.cart.get();
       setCart(cartFromResponse(cartData));
+      setServerTotals(totalsFromResponse(cartData));
+      setCouponCode(cartData.coupon_code || '');
       const wishData = await api.wishlist.list().catch(() => [] as { product: Product }[]);
       setWishlist(wishData.map(item => item.product));
     } catch {
       api.tokens.clearTokens();
       setUser(null);
       setCart([]);
+      setServerTotals(null);
+      setCouponCode('');
       setWishlist([]);
     }
   }, []);
@@ -96,6 +119,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       try {
         const data = await api.cart.add(vid, 1);
         setCart(cartFromResponse(data));
+        setServerTotals(totalsFromResponse(data));
+        setCouponCode(data.coupon_code || '');
         showToast('OK', 'Added to Cart', `${product.name} added to your cart`);
         return;
       } catch (err) {
@@ -109,6 +134,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       return [...prev, { ...product, variant_id: vid, qty: 1 }];
     });
+    setServerTotals(null);
+    setCouponCode('');
     showToast('OK', 'Added locally', 'Sign in before checkout to sync your cart');
   }, [showToast]);
 
@@ -117,9 +144,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (api.tokens.getAccessToken() && item?.cart_item_id) {
       const data = await api.cart.remove(item.cart_item_id);
       setCart(cartFromResponse(data));
+      setServerTotals(totalsFromResponse(data));
+      setCouponCode(data.coupon_code || '');
       return;
     }
     setCart(prev => prev.filter(c => c.id !== id && c.cart_item_id !== id));
+    setServerTotals(null);
   }, [cart]);
 
   const updateQty = useCallback(async (id: number, delta: number) => {
@@ -129,9 +159,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (api.tokens.getAccessToken() && item.cart_item_id) {
       const data = await api.cart.update(item.cart_item_id, nextQty);
       setCart(cartFromResponse(data));
+      setServerTotals(totalsFromResponse(data));
+      setCouponCode(data.coupon_code || '');
       return;
     }
     setCart(prev => prev.map(c => (c.id === id || c.cart_item_id === id) ? { ...c, qty: nextQty } : c));
+    setServerTotals(null);
   }, [cart]);
 
   const toggleWishlist = useCallback(async (product: Product) => {
@@ -156,23 +189,57 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await api.cart.clear().catch(() => null);
     }
     setCart([]);
+    setServerTotals(null);
+    setCouponCode('');
   }, []);
+
+  const applyCoupon = useCallback(async (code: string) => {
+    const nextCode = code.trim().toUpperCase();
+    if (!nextCode) {
+      showToast('!', 'Coupon required', 'Enter a coupon code first');
+      return;
+    }
+    if (!api.tokens.getAccessToken()) {
+      if (nextCode === 'CSM10') {
+        const subtotal = cart.reduce((a, c) => a + toNumber(c.price) * c.qty, 0);
+        const discount = Math.round(subtotal * 0.1);
+        const taxable = subtotal - discount;
+        const cgst = Math.round(taxable * 0.025);
+        const sgst = Math.round(taxable * 0.025);
+        const shipping = subtotal >= 999 || subtotal === 0 ? 0 : 99;
+        setServerTotals({ subtotal, discount, cgst, sgst, shipping, total: taxable + cgst + sgst + shipping });
+        setCouponCode(nextCode);
+        showToast('OK', 'Promo applied locally', 'Sign in to use this coupon at checkout');
+        return;
+      }
+      showToast('!', 'Invalid Code', 'Try CSM10 for 10% off');
+      return;
+    }
+    const data = await api.cart.coupon(nextCode);
+    setCart(cartFromResponse(data));
+    setServerTotals(totalsFromResponse(data));
+    setCouponCode(data.coupon_code || nextCode);
+    showToast('OK', 'Coupon Applied', `${nextCode} updated your cart totals`);
+  }, [cart, showToast]);
 
   const logout = useCallback(async () => {
     await api.auth.logout();
     setUser(null);
     setCart([]);
+    setServerTotals(null);
+    setCouponCode('');
     setWishlist([]);
   }, []);
 
   const getCartTotals = useCallback((): CartTotals => {
+    if (serverTotals) return serverTotals;
     const subtotal = cart.reduce((a, c) => a + toNumber(c.price) * c.qty, 0);
     const discount = 0;
     const cgst = Math.round((subtotal - discount) * 0.025);
     const sgst = Math.round((subtotal - discount) * 0.025);
     const shipping = subtotal >= 999 || subtotal === 0 ? 0 : 99;
     return { subtotal, discount, cgst, sgst, shipping, total: subtotal - discount + cgst + sgst + shipping };
-  }, [cart]);
+  }, [cart, serverTotals]);
 
   const cartCount = cart.reduce((a, c) => a + c.qty, 0);
 
@@ -184,6 +251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cartCount,
       user,
       isAuthed: Boolean(user),
+      couponCode,
       addToCart,
       removeFromCart,
       updateQty,
@@ -191,6 +259,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       isInWishlist,
       showToast,
       clearCart,
+      applyCoupon,
       getCartTotals,
       refreshSession,
       logout,

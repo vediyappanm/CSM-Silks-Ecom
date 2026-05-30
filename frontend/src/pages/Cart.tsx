@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Minus, Plus, ShoppingBag, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ProductVisual } from '@/ui/components';
@@ -5,15 +6,19 @@ import { useApp } from '@/store/AppContext';
 
 export function Cart() {
   const navigate = useNavigate();
-  const { cart, removeFromCart, updateQty, getCartTotals, showToast } = useApp();
+  const { cart, removeFromCart, updateQty, getCartTotals, applyCoupon, couponCode } = useApp();
+  const [promo, setPromo] = useState(couponCode);
+  const [applying, setApplying] = useState(false);
   const totals = getCartTotals();
   const fmt = (n: number) => 'Rs ' + n.toLocaleString('en-IN');
 
-  const handleApplyPromo = () => {
-    const input = document.getElementById('promoInput') as HTMLInputElement;
-    const code = input?.value?.toUpperCase();
-    if (code === 'CSM10') showToast('OK', 'Promo Applied', '10% discount has been applied');
-    else showToast('!', 'Invalid Code', 'Try CSM10 for 10% off');
+  const handleApplyPromo = async () => {
+    setApplying(true);
+    try {
+      await applyCoupon(promo);
+    } finally {
+      setApplying(false);
+    }
   };
 
   return (
@@ -61,13 +66,14 @@ export function Cart() {
         <aside className="order-summary">
           <div className="os-title">Order summary</div>
           <div className="os-row"><span>Subtotal</span><span>{fmt(totals.subtotal)}</span></div>
+          {totals.discount > 0 && <div className="os-row"><span>Discount {couponCode ? `(${couponCode})` : ''}</span><span className="free">- {fmt(totals.discount)}</span></div>}
           <div className="os-row"><span>Shipping</span><span className={totals.shipping === 0 ? 'free' : ''}>{totals.shipping === 0 ? 'Free' : fmt(totals.shipping)}</span></div>
           <div className="os-row"><span>CGST (2.5%)</span><span>{fmt(totals.cgst)}</span></div>
           <div className="os-row"><span>SGST (2.5%)</span><span>{fmt(totals.sgst)}</span></div>
           <div className="os-row total"><span>Total</span><span>{fmt(totals.total)}</span></div>
           <div className="os-promo">
-            <input className="os-promo-input" placeholder="Promo code" id="promoInput" />
-            <button className="os-promo-btn" onClick={handleApplyPromo}>Apply</button>
+            <input className="os-promo-input" placeholder="Promo code" value={promo} onChange={event => setPromo(event.target.value.toUpperCase())} />
+            <button className="os-promo-btn" onClick={() => void handleApplyPromo()} disabled={applying}>{applying ? '...' : 'Apply'}</button>
           </div>
           <button className="os-checkout-btn" onClick={() => navigate('/checkout')} disabled={cart.length === 0}>
             Proceed to checkout

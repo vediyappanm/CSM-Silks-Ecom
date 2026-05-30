@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Order, ReturnRequest
-from .serializers import AdminOrderStatusSerializer, OrderCreateSerializer, OrderSerializer, ReturnCreateSerializer, ReturnSerializer
+from .serializers import AdminOrderStatusSerializer, AdminReturnStatusSerializer, OrderCreateSerializer, OrderSerializer, ReturnCreateSerializer, ReturnSerializer
 from .services import create_order_from_cart
 
 
@@ -115,3 +115,24 @@ class AdminReturnListView(APIView):
     def get(self, request):
         returns = ReturnRequest.objects.select_related("order", "user").order_by("-created_at")
         return Response(ReturnSerializer(returns, many=True).data)
+
+
+class AdminReturnDetailView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, return_id: int):
+        ret = get_object_or_404(ReturnRequest.objects.select_related("order", "user"), id=return_id)
+        serializer = AdminReturnStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ret.status = serializer.validated_data["status"]
+        ret.save(update_fields=["status", "updated_at"])
+        if ret.status == ReturnRequest.Status.REFUNDED:
+            ret.order.status = Order.Status.REFUNDED
+            ret.order.save(update_fields=["status", "updated_at"])
+        elif ret.status == ReturnRequest.Status.APPROVED:
+            ret.order.status = Order.Status.RETURN_INITIATED
+            ret.order.save(update_fields=["status", "updated_at"])
+        elif ret.status == ReturnRequest.Status.REJECTED and ret.order.status == Order.Status.RETURN_INITIATED:
+            ret.order.status = Order.Status.DELIVERED
+            ret.order.save(update_fields=["status", "updated_at"])
+        return Response(ReturnSerializer(ret).data)

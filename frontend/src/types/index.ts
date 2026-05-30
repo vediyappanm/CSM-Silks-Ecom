@@ -180,6 +180,43 @@ export interface Order {
   items: OrderItem[];
 }
 
+export interface AdminInventoryRow {
+  variant_id: number;
+  product_id: number;
+  product_name: string;
+  sku: string;
+  stock_qty: number;
+  reserved_qty: number;
+  available_qty: number;
+  reorder_level: number;
+  low_stock: boolean;
+}
+
+export interface AdminShipment {
+  id: number;
+  order: number;
+  order_number: string;
+  provider: string;
+  awb_number: string;
+  tracking_url: string;
+  status: 'created' | 'picked_up' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed';
+  raw_payload?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReturnRequest {
+  id: number;
+  order: number;
+  order_number: string;
+  customer: string;
+  reason: string;
+  details?: string;
+  status: 'requested' | 'approved' | 'rejected' | 'picked_up' | 'refunded';
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Address {
   id?: number;
   label?: string;

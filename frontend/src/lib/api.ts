@@ -1,6 +1,8 @@
 import type {
   Address,
   AdminProductQuickCreatePayload,
+  AdminInventoryRow,
+  AdminShipment,
   CartResponse,
   CatalogCategory,
   CatalogCollection,
@@ -10,6 +12,7 @@ import type {
   PaginatedResponse,
   Product,
   ProductReview,
+  ReturnRequest,
   User,
 } from '@/types';
 
@@ -237,7 +240,24 @@ export const api = {
         body: JSON.stringify(data),
       })),
     orders: () => request<{ items: Order[]; total: number }>('/admin/orders'),
-    inventory: () => request<JsonMap[]>('/admin/inventory'),
+    inventory: () => request<AdminInventoryRow[]>('/admin/inventory'),
+    adjustInventory: (data: { variant_id: number; quantity_delta: number; note?: string }) =>
+      request<JsonMap>('/admin/inventory', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    shipments: () => request<AdminShipment[]>('/admin/shipments'),
+    createShipment: (data: { order: number; provider: string; awb_number?: string; tracking_url?: string; status?: AdminShipment['status']; raw_payload?: JsonMap }) =>
+      request<AdminShipment>('/admin/shipments', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    returns: () => request<ReturnRequest[]>('/admin/returns'),
+    updateReturn: (returnId: number, data: { status: ReturnRequest['status'] }) =>
+      request<ReturnRequest>(`/admin/returns/${returnId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
     customers: () => request<JsonMap[]>('/admin/customers'),
     reports: () => request<JsonMap>('/admin/reports'),
     unsold: () => request<UnsoldResponse>('/admin/unsold-alerts'),

@@ -1,23 +1,93 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
-import type { PaymentMethod } from '@/types';
+import type { Address, PaymentMethod } from '@/types';
+
+type CheckoutForm = {
+  first_name: string;
+  last_name: string;
+  phone: string;
+  address_line_1: string;
+  address_line_2: string;
+  city: string;
+  state: string;
+  pin_code: string;
+  email: string;
+};
+
+const initialCheckoutForm: CheckoutForm = {
+  first_name: '',
+  last_name: '',
+  phone: '',
+  address_line_1: '',
+  address_line_2: '',
+  city: '',
+  state: '',
+  pin_code: '',
+  email: '',
+};
 
 export function Checkout() {
   const navigate = useNavigate();
-  const { cart, getCartTotals, showToast, clearCart, isAuthed } = useApp();
+  const { cart, getCartTotals, showToast, clearCart, isAuthed, couponCode } = useApp();
   const t = getCartTotals();
   const fmt = (n: number) => 'Rs ' + n.toLocaleString('en-IN');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
+  const [form, setForm] = useState<CheckoutForm>(initialCheckoutForm);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<number | 'new'>('new');
+  const [errors, setErrors] = useState<Partial<Record<keyof CheckoutForm, string>>>({});
+  const [placing, setPlacing] = useState(false);
+
+  useEffect(() => {
+    if (!isAuthed) return;
+    api.addresses.list()
+      .then(items => {
+        setAddresses(items);
+        const preferred = items.find(item => item.is_default) || items[0];
+        if (preferred?.id) {
+          setSelectedAddressId(preferred.id);
+          setForm({
+            first_name: preferred.full_name?.split(' ')[0] || preferred.first_name || '',
+            last_name: preferred.full_name?.split(' ').slice(1).join(' ') || preferred.last_name || '',
+            phone: preferred.phone || '',
+            address_line_1: preferred.address_line_1 || preferred.address_line1 || '',
+            address_line_2: preferred.address_line_2 || preferred.address_line2 || '',
+            city: preferred.city || '',
+            state: preferred.state || '',
+            pin_code: preferred.pin_code || preferred.pincode || '',
+            email: preferred.email || '',
+          });
+        }
+      })
+      .catch(() => setAddresses([]));
+  }, [isAuthed]);
+
+  const selectedAddress = useMemo(() => {
+    return typeof selectedAddressId === 'number' ? addresses.find(address => address.id === selectedAddressId) : null;
+  }, [addresses, selectedAddressId]);
+
+  const updateField = (field: keyof CheckoutForm, value: string) => {
+    setForm(prev => ({ ...prev, [field]: value }));
+    setErrors(prev => ({ ...prev, [field]: '' }));
+    setSelectedAddressId('new');
+  };
+
+  const validateForm = () => {
+    const nextErrors: Partial<Record<keyof CheckoutForm, string>> = {};
+    if (!form.first_name.trim()) nextErrors.first_name = 'Required';
+    if (!form.phone.trim()) nextErrors.phone = 'Required';
+    if (!form.address_line_1.trim()) nextErrors.address_line_1 = 'Required';
+    if (!form.city.trim()) nextErrors.city = 'Required';
+    if (!form.state.trim()) nextErrors.state = 'Required';
+    if (!/^\d{6}$/.test(form.pin_code.trim())) nextErrors.pin_code = 'Enter a 6 digit PIN';
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
 
   const handlePlaceOrder = async () => {
-    const fname = (document.getElementById('ch-fname') as HTMLInputElement)?.value;
-    if (!fname) {
-      showToast('!', 'Missing Details', 'Please fill in your delivery address');
-      return;
-    }
     if (!isAuthed) {
       showToast('!', 'Sign in required', 'Please login with OTP from the account page before checkout');
       navigate('/account');
@@ -27,22 +97,27 @@ export function Checkout() {
       showToast('!', 'Empty Cart', 'Add items to cart first');
       return;
     }
+    if (!validateForm()) {
+      showToast('!', 'Missing Details', 'Please fix the highlighted delivery fields');
+      return;
+    }
+    setPlacing(true);
     try {
-      const lname = (document.getElementById('ch-lname') as HTMLInputElement)?.value || '';
-      const address = await api.addresses.create({
-        full_name: `${fname} ${lname}`.trim(),
-        phone: (document.getElementById('ch-phone') as HTMLInputElement)?.value || '',
-        address_line_1: (document.getElementById('ch-addr1') as HTMLInputElement)?.value || '',
-        address_line_2: (document.getElementById('ch-addr2') as HTMLInputElement)?.value || '',
-        city: (document.getElementById('ch-city') as HTMLInputElement)?.value || '',
-        state: (document.getElementById('ch-state') as HTMLInputElement)?.value || '',
-        pin_code: (document.getElementById('ch-pin') as HTMLInputElement)?.value || '',
+      const address = selectedAddress?.id ? selectedAddress : await api.addresses.create({
+        full_name: `${form.first_name} ${form.last_name}`.trim(),
+        phone: form.phone.trim(),
+        address_line_1: form.address_line_1.trim(),
+        address_line_2: form.address_line_2.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        pin_code: form.pin_code.trim(),
         country: 'India',
-        is_default: true,
+        is_default: addresses.length === 0,
         label: 'Home',
       });
       const order = await api.orders.create({
         address_id: address.id!,
+        coupon_code: couponCode,
         payment_method: paymentMethod === 'cod' ? 'cod' : 'razorpay',
       });
       if (paymentMethod !== 'cod') {
@@ -58,6 +133,8 @@ export function Checkout() {
       setTimeout(() => navigate('/orders'), 1000);
     } catch (err) {
       showToast('!', 'Checkout failed', err instanceof Error ? err.message : 'Unable to place order');
+    } finally {
+      setPlacing(false);
     }
   };
 
@@ -82,20 +159,49 @@ export function Checkout() {
 
           <div className="checkout-card">
             <div className="checkout-card-title"><div className="cct-step">1</div>Delivery Address</div>
+            {addresses.length > 0 && (
+              <div className="address-pills">
+                {addresses.map(address => (
+                  <button
+                    key={address.id}
+                    className={selectedAddressId === address.id ? 'on' : ''}
+                    onClick={() => {
+                      setSelectedAddressId(address.id!);
+                      setForm({
+                        first_name: address.full_name?.split(' ')[0] || address.first_name || '',
+                        last_name: address.full_name?.split(' ').slice(1).join(' ') || address.last_name || '',
+                        phone: address.phone || '',
+                        address_line_1: address.address_line_1 || address.address_line1 || '',
+                        address_line_2: address.address_line_2 || address.address_line2 || '',
+                        city: address.city || '',
+                        state: address.state || '',
+                        pin_code: address.pin_code || address.pincode || '',
+                        email: address.email || '',
+                      });
+                    }}
+                    type="button"
+                  >
+                    <strong>{address.label || 'Address'}</strong>
+                    <span>{address.full_name}, {address.city} {address.pin_code}</span>
+                  </button>
+                ))}
+                <button className={selectedAddressId === 'new' ? 'on' : ''} type="button" onClick={() => { setSelectedAddressId('new'); setForm(initialCheckoutForm); }}>New address</button>
+              </div>
+            )}
             <div className="form-row">
-              <div className="form-field"><label>First Name *</label><input placeholder="Priya" id="ch-fname" /></div>
-              <div className="form-field"><label>Last Name *</label><input placeholder="Venkat" id="ch-lname" /></div>
+              <div className="form-field"><label>First Name *</label><input placeholder="Priya" value={form.first_name} onChange={e => updateField('first_name', e.target.value)} />{errors.first_name && <span>{errors.first_name}</span>}</div>
+              <div className="form-field"><label>Last Name</label><input placeholder="Venkat" value={form.last_name} onChange={e => updateField('last_name', e.target.value)} /></div>
             </div>
-            <div className="form-field"><label>Phone / WhatsApp *</label><input placeholder="+91 98765 43210" id="ch-phone" /></div>
-            <div className="form-field"><label>Address Line 1 *</label><input placeholder="House No, Street Name" id="ch-addr1" /></div>
-            <div className="form-field"><label>Address Line 2</label><input placeholder="Area, Landmark" id="ch-addr2" /></div>
+            <div className="form-field"><label>Phone / WhatsApp *</label><input placeholder="+91 98765 43210" value={form.phone} onChange={e => updateField('phone', e.target.value)} />{errors.phone && <span>{errors.phone}</span>}</div>
+            <div className="form-field"><label>Address Line 1 *</label><input placeholder="House No, Street Name" value={form.address_line_1} onChange={e => updateField('address_line_1', e.target.value)} />{errors.address_line_1 && <span>{errors.address_line_1}</span>}</div>
+            <div className="form-field"><label>Address Line 2</label><input placeholder="Area, Landmark" value={form.address_line_2} onChange={e => updateField('address_line_2', e.target.value)} /></div>
             <div className="form-row">
-              <div className="form-field"><label>City *</label><input placeholder="Chennai" id="ch-city" /></div>
-              <div className="form-field"><label>State *</label><input placeholder="Tamil Nadu" id="ch-state" /></div>
+              <div className="form-field"><label>City *</label><input placeholder="Chennai" value={form.city} onChange={e => updateField('city', e.target.value)} />{errors.city && <span>{errors.city}</span>}</div>
+              <div className="form-field"><label>State *</label><input placeholder="Tamil Nadu" value={form.state} onChange={e => updateField('state', e.target.value)} />{errors.state && <span>{errors.state}</span>}</div>
             </div>
             <div className="form-row">
-              <div className="form-field"><label>PIN Code *</label><input placeholder="600001" id="ch-pin" /></div>
-              <div className="form-field"><label>Email</label><input placeholder="priya@email.com" id="ch-email" type="email" /></div>
+              <div className="form-field"><label>PIN Code *</label><input placeholder="600001" value={form.pin_code} onChange={e => updateField('pin_code', e.target.value.replace(/\D/g, '').slice(0, 6))} />{errors.pin_code && <span>{errors.pin_code}</span>}</div>
+              <div className="form-field"><label>Email</label><input placeholder="priya@email.com" value={form.email} onChange={e => updateField('email', e.target.value)} type="email" /></div>
             </div>
           </div>
 
@@ -125,8 +231,8 @@ export function Checkout() {
             )}
           </div>
 
-          <button className="place-btn" onClick={() => void handlePlaceOrder()}>
-            Place Order - {fmt(t.total)}
+          <button className="place-btn" onClick={() => void handlePlaceOrder()} disabled={placing}>
+            {placing ? 'Placing order...' : `Place Order - ${fmt(t.total)}`}
           </button>
         </div>
 
@@ -145,6 +251,7 @@ export function Checkout() {
             ))}
             <div style={{ height: 1, background: 'rgba(255,255,255,.08)', margin: '14px 0' }} />
             <div className="os-row"><span>Subtotal</span><span className="os-val">{fmt(t.subtotal)}</span></div>
+            {t.discount > 0 && <div className="os-row"><span>Discount {couponCode ? `(${couponCode})` : ''}</span><span className="os-val free">- {fmt(t.discount)}</span></div>}
             <div className="os-row"><span>Shipping</span><span className="os-val" style={{ color: t.shipping === 0 ? 'var(--grn)' : 'inherit' }}>{t.shipping === 0 ? 'Free' : fmt(t.shipping)}</span></div>
             <div className="os-row"><span>GST (5%)</span><span className="os-val">{fmt(t.cgst + t.sgst)}</span></div>
             <div className="os-row total"><span>Total</span><span className="os-val">{fmt(t.total)}</span></div>

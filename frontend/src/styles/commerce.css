@@ -391,6 +391,12 @@
 .os-promo-btn { padding: 0 12px; }
 .os-checkout-btn,
 .place-btn { width: 100%; }
+.os-promo-btn:disabled,
+.os-checkout-btn:disabled,
+.place-btn:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+}
 .os-guarantees {
   display: grid;
   gap: 7px;
@@ -461,6 +467,40 @@
   background: var(--surface);
   color: var(--ink);
   outline: 0;
+}
+.form-field span {
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 900;
+}
+.address-pills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.address-pills button {
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+.address-pills button.on {
+  border-color: var(--gold);
+  background: rgba(185,132,46,.1);
+}
+.address-pills strong,
+.address-pills span {
+  display: block;
+}
+.address-pills span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .payment-opts {
   display: grid;
@@ -679,6 +719,7 @@
   .cart-item { grid-template-columns: 92px minmax(0, 1fr); }
   .ci-right { grid-column: 1 / -1; text-align: left; }
   .payment-opts,
+  .address-pills,
   .form-row,
   .rewards-grid { grid-template-columns: 1fr; }
   .order-summary { position: static; }

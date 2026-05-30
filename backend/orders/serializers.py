@@ -94,6 +94,10 @@ class ReturnCreateSerializer(serializers.Serializer):
     details = serializers.CharField(required=False, allow_blank=True)
 
 
+class AdminReturnStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=ReturnRequest.Status.choices)
+
+
 class ReturnSerializer(serializers.ModelSerializer):
     order_number = serializers.CharField(source="order.order_number", read_only=True)
     customer = serializers.CharField(source="user.display_name", read_only=True)

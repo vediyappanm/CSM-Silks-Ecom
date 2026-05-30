@@ -5,13 +5,16 @@ import {
   BarChart3,
   Boxes,
   FileText,
+  PackageCheck,
+  RotateCcw,
   ShoppingBag,
+  Truck,
   Users,
 } from 'lucide-react';
 import { AdminCatalogManager } from '@/features/admin/components/AdminCatalogManager';
-import type { Order, User } from '@/types';
+import type { AdminInventoryRow, AdminShipment, Order, ReturnRequest, User } from '@/types';
 
-type AdminPage = 'dashboard' | 'orders' | 'products' | 'customers' | 'reports' | 'unsold';
+type AdminPage = 'dashboard' | 'orders' | 'products' | 'inventory' | 'shipments' | 'returns' | 'customers' | 'reports' | 'unsold';
 type Kpis = Record<string, number | string>;
 type AdminOrderRow = Partial<Order> & {
   id: number;
@@ -106,6 +109,9 @@ export function Admin() {
     { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { key: 'orders', label: 'Orders', icon: ShoppingBag },
     { key: 'products', label: 'Catalog', icon: Boxes },
+    { key: 'inventory', label: 'Inventory', icon: PackageCheck },
+    { key: 'shipments', label: 'Shipments', icon: Truck },
+    { key: 'returns', label: 'Returns', icon: RotateCcw },
     { key: 'customers', label: 'Customers', icon: Users },
     { key: 'reports', label: 'Reports', icon: FileText },
     { key: 'unsold', label: 'Stock Alerts', icon: AlertTriangle },
@@ -138,6 +144,9 @@ export function Admin() {
           {page === 'dashboard' && <AdminDashboard />}
           {page === 'orders' && <AdminOrders />}
           {page === 'products' && <AdminCatalogManager />}
+          {page === 'inventory' && <AdminInventory />}
+          {page === 'shipments' && <AdminShipments />}
+          {page === 'returns' && <AdminReturns />}
           {page === 'customers' && <AdminCustomers />}
           {page === 'reports' && <AdminReports />}
           {page === 'unsold' && <AdminUnsold />}
@@ -215,6 +224,201 @@ function AdminOrderTable({ orders, onStatus }: { orders: AdminOrderRow[]; onStat
         ))}
       </tbody>
     </table>
+  );
+}
+
+function AdminInventory() {
+  const [items, setItems] = useState<AdminInventoryRow[]>([]);
+  const [adjustments, setAdjustments] = useState<Record<number, string>>({});
+  const [notice, setNotice] = useState('');
+
+  const load = () => {
+    api.admin.inventory().then(setItems).catch(() => setItems([]));
+  };
+
+  useEffect(load, []);
+
+  const adjust = async (row: AdminInventoryRow) => {
+    const delta = Number(adjustments[row.variant_id] || 0);
+    if (!delta) return;
+    await api.admin.adjustInventory({
+      variant_id: row.variant_id,
+      quantity_delta: delta,
+      note: `Admin stock ${delta > 0 ? 'add' : 'reduce'} from operations UI`,
+    });
+    setAdjustments(prev => ({ ...prev, [row.variant_id]: '' }));
+    setNotice(`${row.sku} stock adjusted by ${delta}.`);
+    load();
+  };
+
+  return (
+    <div className="admin-stack">
+      {notice && <div className="admin-alert good">{notice}</div>}
+      <div className="admin-panel-head">
+        <div>
+          <span className="admin-eyebrow">Stock control</span>
+          <h2>Inventory adjustment</h2>
+          <p>Add received stock, reduce damaged stock, and keep low-stock flags visible before customers buy.</p>
+        </div>
+      </div>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>Product</th><th>SKU</th><th>Stock</th><th>Reserved</th><th>Available</th><th>Status</th><th>Adjust</th></tr></thead>
+          <tbody>
+            {items.map(row => (
+              <tr key={row.variant_id}>
+                <td>{row.product_name}</td>
+                <td>{row.sku}</td>
+                <td>{row.stock_qty}</td>
+                <td>{row.reserved_qty}</td>
+                <td>{row.available_qty}</td>
+                <td><span className={`status-badge ${row.low_stock ? 'st-pending' : 'st-delivered'}`}>{row.low_stock ? 'Low stock' : 'Healthy'}</span></td>
+                <td>
+                  <div className="admin-inline-form">
+                    <input
+                      type="number"
+                      value={adjustments[row.variant_id] || ''}
+                      onChange={e => setAdjustments(prev => ({ ...prev, [row.variant_id]: e.target.value }))}
+                      placeholder="+10 / -2"
+                    />
+                    <button onClick={() => void adjust(row)}>Save</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AdminShipments() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [shipments, setShipments] = useState<AdminShipment[]>([]);
+  const [form, setForm] = useState({ order: '', provider: 'manual', awb_number: '', tracking_url: '', status: 'created' as AdminShipment['status'] });
+  const [notice, setNotice] = useState('');
+
+  const load = () => {
+    Promise.all([
+      api.admin.orders().then(data => data.items),
+      api.admin.shipments(),
+    ]).then(([orderData, shipmentData]) => {
+      setOrders(orderData);
+      setShipments(shipmentData);
+      setForm(prev => prev.order || !orderData[0] ? prev : { ...prev, order: String(orderData[0].id) });
+    }).catch(() => {
+      setOrders([]);
+      setShipments([]);
+    });
+  };
+
+  useEffect(load, []);
+
+  const saveShipment = async () => {
+    if (!form.order) return;
+    const shipment = await api.admin.createShipment({
+      order: Number(form.order),
+      provider: form.provider,
+      awb_number: form.awb_number,
+      tracking_url: form.tracking_url,
+      status: form.status,
+    });
+    setNotice(`${shipment.order_number} shipment saved.`);
+    setForm(prev => ({ ...prev, awb_number: '', tracking_url: '' }));
+    load();
+  };
+
+  return (
+    <div className="admin-create-grid compact">
+      <div className="admin-form-card">
+        <div className="chart-title"><Truck size={18} /> Add shipment / tracking</div>
+        <label className="admin-field wide">Order
+          <select value={form.order} onChange={e => setForm({ ...form, order: e.target.value })}>
+            {orders.map(order => <option key={order.id} value={order.id}>{order.order_number} - Rs {Number(order.total_amount).toLocaleString('en-IN')}</option>)}
+          </select>
+        </label>
+        <div className="admin-form-grid">
+          <label className="admin-field">Courier<input value={form.provider} onChange={e => setForm({ ...form, provider: e.target.value })} placeholder="Shiprocket / DTDC" /></label>
+          <label className="admin-field">AWB / Tracking<input value={form.awb_number} onChange={e => setForm({ ...form, awb_number: e.target.value })} /></label>
+          <label className="admin-field wide">Tracking URL<input value={form.tracking_url} onChange={e => setForm({ ...form, tracking_url: e.target.value })} placeholder="https://..." /></label>
+          <label className="admin-field">Status
+            <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as AdminShipment['status'] })}>
+              <option value="created">Created</option>
+              <option value="picked_up">Picked up</option>
+              <option value="in_transit">In transit</option>
+              <option value="out_for_delivery">Out for delivery</option>
+              <option value="delivered">Delivered</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+        </div>
+        {notice && <div className="admin-alert good">{notice}</div>}
+        <button className="admin-primary-btn admin-submit" onClick={() => void saveShipment()}>Save shipment</button>
+      </div>
+      <div className="admin-form-card">
+        <div className="chart-title">Current shipments</div>
+        <div className="admin-collection-list">
+          {shipments.map(shipment => (
+            <div key={shipment.id} className="admin-collection-row">
+              <div>
+                <strong>{shipment.order_number}</strong>
+                <span>{shipment.provider} / {shipment.awb_number || 'No AWB'} / {shipment.status}</span>
+              </div>
+              <span className={`status-badge ${shipment.status === 'delivered' ? 'st-delivered' : 'st-shipped'}`}>{shipment.status}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminReturns() {
+  const [returns, setReturns] = useState<ReturnRequest[]>([]);
+  const [notice, setNotice] = useState('');
+
+  const load = () => {
+    api.admin.returns().then(setReturns).catch(() => setReturns([]));
+  };
+
+  useEffect(load, []);
+
+  const updateReturn = async (ret: ReturnRequest, status: ReturnRequest['status']) => {
+    const updated = await api.admin.updateReturn(ret.id, { status });
+    setReturns(prev => prev.map(item => item.id === updated.id ? updated : item));
+    setNotice(`${updated.order_number} return marked ${updated.status}.`);
+  };
+
+  return (
+    <div className="admin-stack">
+      {notice && <div className="admin-alert good">{notice}</div>}
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>Return</th><th>Customer</th><th>Reason</th><th>Status</th><th>Date</th><th>Action</th></tr></thead>
+          <tbody>
+            {returns.map(ret => (
+              <tr key={ret.id}>
+                <td>{ret.order_number}</td>
+                <td>{ret.customer}</td>
+                <td>{ret.reason}<span className="admin-muted-line">{ret.details}</span></td>
+                <td><span className={`status-badge ${ret.status === 'refunded' ? 'st-delivered' : 'st-processing'}`}>{ret.status}</span></td>
+                <td>{new Date(ret.created_at).toLocaleDateString('en-IN')}</td>
+                <td>
+                  <select value={ret.status} onChange={e => void updateReturn(ret, e.target.value as ReturnRequest['status'])}>
+                    <option value="requested">Requested</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="picked_up">Picked up</option>
+                    <option value="refunded">Refunded</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
