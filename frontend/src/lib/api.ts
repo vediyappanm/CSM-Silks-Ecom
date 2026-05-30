@@ -57,9 +57,10 @@ function normalizeProduct(product: Product): Product {
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const token = getAccessToken();
+  const isFormData = options?.body instanceof FormData;
   const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
@@ -239,6 +240,14 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       })),
+    uploadProductImage: (file: File) => {
+      const body = new FormData();
+      body.append('image', file);
+      return request<{ image_url: string }>('/admin/product-images', {
+        method: 'POST',
+        body,
+      });
+    },
     orders: () => request<{ items: Order[]; total: number }>('/admin/orders'),
     inventory: () => request<AdminInventoryRow[]>('/admin/inventory'),
     adjustInventory: (data: { variant_id: number; quantity_delta: number; note?: string }) =>

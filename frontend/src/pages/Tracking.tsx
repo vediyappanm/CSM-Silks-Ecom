@@ -37,12 +37,16 @@ export function Tracking() {
   const first = order.items?.[0];
   const p = first?.product;
   const isDelivered = order.status === 'delivered';
+  const hasPacked = ['packed', 'shipped', 'out_for_delivery', 'delivered'].includes(order.status);
+  const hasShipped = ['shipped', 'out_for_delivery', 'delivered'].includes(order.status);
+  const isOutForDelivery = ['out_for_delivery', 'delivered'].includes(order.status);
 
   const steps = [
     { title: 'Order Placed', desc: `${order.payment_method || 'payment'} checkout`, time: new Date(order.created_at).toLocaleString('en-IN'), status: 'done' },
     { title: 'Quality Check', desc: 'Silk quality verification', time: order.confirmed_at ? new Date(order.confirmed_at).toLocaleString('en-IN') : '', status: order.confirmed_at ? 'done' : 'act' },
-    { title: 'Packed', desc: 'Luxury CSM packaging', time: '', status: ['packed', 'shipped', 'out_for_delivery', 'delivered'].includes(order.status) ? 'done' : '' },
-    { title: 'Shipped', desc: order.tracking_number || 'Courier assignment pending', time: order.shipped_at ? new Date(order.shipped_at).toLocaleString('en-IN') : '', status: ['shipped', 'out_for_delivery', 'delivered'].includes(order.status) ? 'act' : '' },
+    { title: 'Packed', desc: 'Luxury CSM packaging', time: '', status: hasPacked ? 'done' : '' },
+    { title: 'Shipped', desc: order.tracking_number || 'Courier assignment pending', time: order.shipped_at ? new Date(order.shipped_at).toLocaleString('en-IN') : '', status: hasShipped ? 'done' : '' },
+    { title: 'Out for Delivery', desc: order.courier_name || 'Courier is preparing delivery', time: '', status: isOutForDelivery ? (isDelivered ? 'done' : 'act') : '' },
     { title: 'Delivered', desc: isDelivered ? 'Delivered to your address' : 'Delivery pending', time: order.delivered_at ? new Date(order.delivered_at).toLocaleString('en-IN') : '', status: isDelivered ? 'done' : '' },
   ];
 
@@ -97,6 +101,7 @@ export function Tracking() {
 
         <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
           <button className="btn btn-ghost" style={{ fontSize: 12 }}>Call Support</button>
+          {order.tracking_url && <a className="btn btn-ghost" style={{ fontSize: 12 }} href={order.tracking_url} target="_blank">Open courier tracking</a>}
           <a className="btn btn-wa" style={{ fontSize: 12 }} href={`https://wa.me/919876543210?text=Hi!%20I%20need%20help%20with%20order%20${order.order_number}`} target="_blank">WhatsApp Support</a>
         </div>
       </div>

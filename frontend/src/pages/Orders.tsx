@@ -42,17 +42,29 @@ export function Orders() {
   };
 
   const statusClass: Record<string, string> = {
+    packed: 'os-processing',
     shipped: 'os-shipped',
+    out_for_delivery: 'os-shipped',
     delivered: 'os-delivered',
     confirmed: 'os-processing',
+    quality_check: 'os-processing',
+    return_initiated: 'os-pending',
+    returned: 'os-pending',
+    refunded: 'os-delivered',
     payment_pending: 'os-pending',
     pending: 'os-pending',
     cancelled: 'os-pending',
   };
   const statusLabel: Record<string, string> = {
+    packed: 'Packed',
     shipped: 'Shipped',
+    out_for_delivery: 'Out for Delivery',
     delivered: 'Delivered',
     confirmed: 'Confirmed',
+    quality_check: 'Quality Check',
+    return_initiated: 'Return Initiated',
+    returned: 'Returned',
+    refunded: 'Refunded',
     payment_pending: 'Payment Pending',
     pending: 'Pending',
     cancelled: 'Cancelled',

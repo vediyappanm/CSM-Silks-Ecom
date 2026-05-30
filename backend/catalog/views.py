@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import timedelta
 from math import ceil
 
+from django.core.files.storage import default_storage
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Max, Min
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -235,6 +237,30 @@ class AdminProductImageListCreateView(APIView):
         return Response(ProductImageSerializer(images, many=True).data)
 
     def post(self, request):
+        uploaded_file: UploadedFile | None = request.FILES.get("image")
+        if uploaded_file:
+            if uploaded_file.size > 5 * 1024 * 1024:
+                return Response({"detail": "Image must be 5MB or smaller"}, status=status.HTTP_400_BAD_REQUEST)
+            if uploaded_file.content_type and not uploaded_file.content_type.startswith("image/"):
+                return Response({"detail": "Only image uploads are allowed"}, status=status.HTTP_400_BAD_REQUEST)
+            path = default_storage.save(f"product-images/{timezone.now():%Y%m%d%H%M%S}-{uploaded_file.name}", uploaded_file)
+            file_url = default_storage.url(path)
+            if not file_url.startswith(("http://", "https://", "/")):
+                file_url = f"/{file_url}"
+            image_url = request.build_absolute_uri(file_url)
+            product_id = request.data.get("product")
+            variant_id = request.data.get("variant") or None
+            if product_id:
+                image = ProductImage.objects.create(
+                    product_id=product_id,
+                    variant_id=variant_id,
+                    image_url=image_url,
+                    alt_text=request.data.get("alt_text", ""),
+                    sort_order=int(request.data.get("sort_order") or 0),
+                    is_primary=str(request.data.get("is_primary", "true")).lower() in {"1", "true", "yes"},
+                )
+                return Response(ProductImageSerializer(image).data, status=status.HTTP_201_CREATED)
+            return Response({"image_url": image_url}, status=status.HTTP_201_CREATED)
         serializer = AdminProductImageWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image = serializer.save()

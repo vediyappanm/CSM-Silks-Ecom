@@ -61,8 +61,11 @@ class TokenResponseSerializer(serializers.Serializer):
 
 
 class AddressSerializer(serializers.ModelSerializer):
+    address_line_1 = serializers.CharField(required=False)
+    address_line_2 = serializers.CharField(required=False, allow_blank=True)
     address_line1 = serializers.CharField(source="address_line_1", required=False)
     address_line2 = serializers.CharField(source="address_line_2", required=False, allow_blank=True)
+    pin_code = serializers.CharField(required=False)
     pincode = serializers.CharField(source="pin_code", required=False)
 
     class Meta:
@@ -86,6 +89,16 @@ class AddressSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    def validate(self, attrs):
+        errors = {}
+        if not attrs.get("address_line_1") and not getattr(self.instance, "address_line_1", ""):
+            errors["address_line_1"] = ["This field is required."]
+        if not attrs.get("pin_code") and not getattr(self.instance, "pin_code", ""):
+            errors["pin_code"] = ["This field is required."]
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
     def create(self, validated_data):
         user = self.context["request"].user

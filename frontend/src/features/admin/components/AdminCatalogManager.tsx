@@ -79,6 +79,7 @@ export function AdminCatalogManager() {
   const [collectionForm, setCollectionForm] = useState({ name: '', description: '', is_featured: true });
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -200,6 +201,21 @@ export function AdminCatalogManager() {
       setError(err instanceof Error ? err.message : 'Unable to create collection');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const uploadImage = async (file?: File) => {
+    if (!file) return;
+    setUploadingImage(true);
+    setError('');
+    try {
+      const result = await api.admin.uploadProductImage(file);
+      setForm(prev => ({ ...prev, image_url: result.image_url }));
+      setNotice('Product photo uploaded and attached to the preview.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to upload image');
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -337,6 +353,7 @@ export function AdminCatalogManager() {
 
             <div className="admin-form-section">Merchandising</div>
             <div className="admin-form-grid">
+              <label className="admin-field wide">Upload product photo<input type="file" accept="image/*" onChange={event => void uploadImage(event.target.files?.[0])} /></label>
               <label className="admin-field wide">Image URL<input value={form.image_url} onChange={e => setForm({ ...form, image_url: e.target.value })} placeholder="https://..." /></label>
               <label className="admin-field">Deal label<input value={form.deal_label} onChange={e => setForm({ ...form, deal_label: e.target.value })} /></label>
               <label className="admin-field">Tags<input value={form.tags_text} onChange={e => setForm({ ...form, tags_text: e.target.value })} /></label>
@@ -352,8 +369,8 @@ export function AdminCatalogManager() {
               {collections.map(collection => <option key={collection.id} value={collection.name} />)}
             </datalist>
 
-            <button className="admin-primary-btn admin-submit" type="submit" disabled={saving}>
-              <Save size={16} /> {saving ? 'Publishing...' : 'Publish to customer store'}
+            <button className="admin-primary-btn admin-submit" type="submit" disabled={saving || uploadingImage}>
+              <Save size={16} /> {uploadingImage ? 'Uploading image...' : saving ? 'Publishing...' : 'Publish to customer store'}
             </button>
           </div>
 

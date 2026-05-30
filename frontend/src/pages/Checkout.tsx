@@ -29,6 +29,45 @@ const initialCheckoutForm: CheckoutForm = {
   email: '',
 };
 
+type RazorpayCheckoutOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  prefill: { name: string; contact: string; email?: string };
+  handler: (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => void;
+  modal: { ondismiss: () => void };
+  theme: { color: string };
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayCheckoutOptions) => { open: () => void };
+  }
+}
+
+function loadRazorpayScript() {
+  return new Promise<boolean>((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true), { once: true });
+      existing.addEventListener('error', () => resolve(false), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export function Checkout() {
   const navigate = useNavigate();
   const { cart, getCartTotals, showToast, clearCart, isAuthed, couponCode } = useApp();
@@ -122,11 +161,45 @@ export function Checkout() {
       });
       if (paymentMethod !== 'cod') {
         const rz = await api.payments.createRazorpayOrder(order.id);
-        await api.payments.verify({
-          razorpay_order_id: rz.razorpay_order_id,
-          razorpay_payment_id: `pay_dev_${Date.now()}`,
-          razorpay_signature: 'dev',
-        });
+        if (rz.key) {
+          const loaded = await loadRazorpayScript();
+          if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout. Please try COD or refresh.');
+          const RazorpayCtor = window.Razorpay;
+          await new Promise<void>((resolve, reject) => {
+            const checkout = new RazorpayCtor({
+              key: rz.key || '',
+              amount: rz.amount,
+              currency: rz.currency,
+              name: 'CSM Silks',
+              description: order.order_number,
+              order_id: rz.razorpay_order_id,
+              prefill: {
+                name: `${form.first_name} ${form.last_name}`.trim(),
+                contact: form.phone,
+                email: form.email || undefined,
+              },
+              handler: async (response) => {
+                try {
+                  await api.payments.verify(response);
+                  resolve();
+                } catch (err) {
+                  reject(err);
+                }
+              },
+              modal: {
+                ondismiss: () => reject(new Error('Payment was not completed')),
+              },
+              theme: { color: '#b9842e' },
+            });
+            checkout.open();
+          });
+        } else {
+          await api.payments.verify({
+            razorpay_order_id: rz.razorpay_order_id,
+            razorpay_payment_id: `pay_dev_${Date.now()}`,
+            razorpay_signature: 'dev',
+          });
+        }
       }
       showToast('OK', 'Order Placed', `${order.order_number} confirmed for ${fmt(Number(order.total_amount))}`);
       await clearCart();

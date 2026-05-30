@@ -1,8 +1,13 @@
+from datetime import timedelta
+
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from notifications.models import Notification
+from orders.models import Order
 
 from .models import Shipment
 from .serializers import ShipmentSerializer, ShipmentWriteSerializer
@@ -25,15 +30,24 @@ class AdminShipmentListCreateView(APIView):
         order.courier_name = shipment.provider
         order.tracking_number = shipment.awb_number
         order.courier_url = shipment.tracking_url
+        if not order.estimated_delivery and shipment.status != Shipment.Status.DELIVERED:
+            order.estimated_delivery = timezone.now() + timedelta(days=4)
         if shipment.status == Shipment.Status.DELIVERED:
-            order.status = order.Status.DELIVERED
+            order.status = Order.Status.DELIVERED
             order.delivered_at = order.delivered_at or timezone.now()
         elif shipment.status == Shipment.Status.OUT_FOR_DELIVERY:
-            order.status = order.Status.OUT_FOR_DELIVERY
+            order.status = Order.Status.OUT_FOR_DELIVERY
         elif shipment.status in {Shipment.Status.PICKED_UP, Shipment.Status.IN_TRANSIT}:
-            order.status = order.Status.SHIPPED
+            order.status = Order.Status.SHIPPED
             order.shipped_at = order.shipped_at or timezone.now()
-        elif order.status in {order.Status.CONFIRMED, order.Status.QUALITY_CHECK}:
-            order.status = order.Status.PACKED
+        elif order.status in {Order.Status.CONFIRMED, Order.Status.QUALITY_CHECK}:
+            order.status = Order.Status.PACKED
         order.save()
+        Notification.objects.create(
+            user=order.user,
+            title="Order tracking updated",
+            body=f"{order.order_number} is now {order.status.replace('_', ' ')}.",
+            notification_type="shipping",
+            data={"order_id": order.id, "order_number": order.order_number, "tracking_number": order.tracking_number},
+        )
         return Response(ShipmentSerializer(shipment).data, status=status.HTTP_201_CREATED)

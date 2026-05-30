@@ -1,12 +1,16 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Address
 from catalog.models import Category, Product, ProductVariant
+from inventory.models import StockReservation
+from notifications.models import Notification
 from orders.pricing import calculate_gst, calculate_loyalty_points
+from orders.models import Order
 
 User = get_user_model()
 
@@ -55,6 +59,61 @@ class CheckoutFlowTests(TestCase):
         cart_resp = self.client.get("/api/cart")
         self.assertEqual(cart_resp.json()["item_count"], 0)
 
+    def test_prepaid_payment_confirms_order_and_releases_stock_reservation(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": self.address.id, "payment_method": "razorpay"},
+            format="json",
+        )
+        self.assertEqual(order_resp.status_code, 201)
+        order_id = order_resp.json()["id"]
+        self.assertEqual(order_resp.json()["status"], "payment_pending")
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.reserved_qty, 1)
+
+        gateway_resp = self.client.post("/api/payments/razorpay/order", {"order_id": order_id}, format="json")
+        self.assertEqual(gateway_resp.status_code, 200)
+        verify_resp = self.client.post(
+            "/api/payments/razorpay/verify",
+            {
+                "razorpay_order_id": gateway_resp.json()["razorpay_order_id"],
+                "razorpay_payment_id": "pay_test_123",
+                "razorpay_signature": "dev",
+            },
+            format="json",
+        )
+        self.assertEqual(verify_resp.status_code, 200)
+
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 1)
+        self.assertEqual(self.variant.reserved_qty, 0)
+        self.assertFalse(StockReservation.objects.filter(order_number=Order.objects.get(id=order_id).order_number, released_at__isnull=True).exists())
+
+    def test_admin_shipment_marks_order_delivered_and_notifies_customer(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="admin", email="admin@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        shipment_resp = self.client.post(
+            "/api/admin/shipments",
+            {
+                "order": order_id,
+                "provider": "manual",
+                "awb_number": "AWB123",
+                "tracking_url": "https://track.example.com/AWB123",
+                "status": "delivered",
+            },
+            format="json",
+        )
+        self.assertEqual(shipment_resp.status_code, 201)
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.status, Order.Status.DELIVERED)
+        self.assertEqual(order.tracking_number, "AWB123")
+        self.assertTrue(Notification.objects.filter(user=self.user, notification_type="shipping").exists())
+
 
 class ProductApiTests(TestCase):
     def test_product_listing_shape_matches_frontend(self):
@@ -68,3 +127,12 @@ class ProductApiTests(TestCase):
         self.assertEqual(item["slug"], "pure-silk-dhoti")
         self.assertIn("badge-text", item)
         self.assertIn("variant_id", item)
+
+    def test_admin_can_upload_product_image_for_quick_create(self):
+        admin = User.objects.create_user(username="admin-upload", email="upload@example.com", password="admin123", is_staff=True)
+        client = APIClient()
+        client.force_authenticate(admin)
+        image = SimpleUploadedFile("saree.jpg", b"\xff\xd8\xff\xe0test-image", content_type="image/jpeg")
+        resp = client.post("/api/admin/product-images", {"image": image}, format="multipart")
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn("/media/product-images/", resp.json()["image_url"])

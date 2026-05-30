@@ -484,6 +484,10 @@
   padding: 0 11px;
   text-transform: none;
 }
+.admin-field input[type="file"] {
+  height: auto;
+  padding: 10px;
+}
 .admin-field textarea {
   min-height: 92px;
   padding: 10px 11px;
