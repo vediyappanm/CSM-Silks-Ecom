@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Heart, Home, MapPin, Menu, Search, Shirt, ShoppingBag, Sparkles, UserRound, X } from 'lucide-react';
 import { BrandMark } from '@/ui/components';
@@ -9,6 +9,7 @@ export function Navbar() {
   const location = useLocation();
   const { cartCount } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   const isActive = (path: string) => location.pathname === path;
   const closeAndGo = (path: string) => {
@@ -23,6 +24,12 @@ export function Navbar() {
     { path: '/search', label: 'Search', icon: Search },
   ];
 
+  const submitSearch = (event: FormEvent) => {
+    event.preventDefault();
+    const nextQuery = query.trim();
+    navigate(nextQuery ? `/search?q=${encodeURIComponent(nextQuery)}` : '/search');
+  };
+
   return (
     <>
       <nav className="nav">
@@ -34,6 +41,12 @@ export function Navbar() {
           <MapPin size={16} />
           <span>Deliver to 600001</span>
         </button>
+
+        <form className="nav-search" onSubmit={submitSearch}>
+          <Search size={18} />
+          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search sarees, dhotis, silk shirts" />
+          <button type="submit">Search</button>
+        </form>
 
         <div className="nav-links">
           {navItems.map((item) => {

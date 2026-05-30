@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils.text import slugify
 from rest_framework import serializers
+from inventory.models import StockLedger
 
 from .models import Category, Collection, Product, ProductImage, ProductVariant
 
@@ -51,6 +56,27 @@ class ProductImageSerializer(serializers.ModelSerializer):
         fields = ["id", "variant_id", "image_url", "alt_text", "sort_order", "is_primary"]
 
 
+class AdminCategoryWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ["id", "name", "slug", "gender", "parent", "sort_order", "is_active"]
+        read_only_fields = ["id"]
+
+
+class AdminCollectionWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Collection
+        fields = ["id", "name", "slug", "description", "is_featured", "sort_order"]
+        read_only_fields = ["id"]
+
+
+class AdminProductImageWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductImage
+        fields = ["id", "product", "variant", "image_url", "alt_text", "sort_order", "is_primary"]
+        read_only_fields = ["id"]
+
+
 class ProductListSerializer(serializers.ModelSerializer):
     cat = serializers.CharField(source="category.name", read_only=True)
     category_slug = serializers.CharField(source="category.slug", read_only=True)
@@ -59,6 +85,7 @@ class ProductListSerializer(serializers.ModelSerializer):
     colors = serializers.SerializerMethodField()
     colours = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
+    collections = CollectionSerializer(many=True, read_only=True)
     default_variant_id = serializers.SerializerMethodField()
     variant_id = serializers.SerializerMethodField()
     available_qty = serializers.SerializerMethodField()
@@ -94,6 +121,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "colors",
             "colours",
             "images",
+            "collections",
             "default_variant_id",
             "variant_id",
             "available_qty",
@@ -212,6 +240,7 @@ class AdminProductWriteSerializer(serializers.ModelSerializer):
             "description",
             "hook",
             "category",
+            "collections",
             "gender",
             "tags",
             "occasions",
@@ -234,6 +263,208 @@ class AdminProductWriteSerializer(serializers.ModelSerializer):
             "is_featured",
             "is_gi_tagged",
         ]
+
+
+def _split_text(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def _unique_slug(model, base_value: str, current_id: int | None = None) -> str:
+    base_slug = slugify(base_value)[:70] or "item"
+    slug = base_slug
+    counter = 2
+    qs = model.objects.all()
+    if current_id:
+        qs = qs.exclude(id=current_id)
+    while qs.filter(slug=slug).exists():
+        suffix = f"-{counter}"
+        slug = f"{base_slug[: 70 - len(suffix)]}{suffix}"
+        counter += 1
+    return slug
+
+
+def _unique_sku(base_value: str) -> str:
+    base_sku = "".join(char for char in base_value.upper() if char.isalnum())[:32] or "CSM-SKU"
+    sku = base_sku
+    counter = 2
+    while ProductVariant.objects.filter(sku=sku).exists():
+        suffix = f"-{counter}"
+        sku = f"{base_sku[: 60 - len(suffix)]}{suffix}"
+        counter += 1
+    return sku
+
+
+class AdminProductQuickCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    slug = serializers.SlugField(required=False, allow_blank=True)
+    gender = serializers.ChoiceField(choices=Product.Gender.choices, default=Product.Gender.WOMEN)
+    category_name = serializers.CharField(max_length=120)
+    category_slug = serializers.SlugField(required=False, allow_blank=True)
+    collection_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    collection_slug = serializers.SlugField(required=False, allow_blank=True)
+    collection_description = serializers.CharField(required=False, allow_blank=True)
+    hook = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    tags = serializers.ListField(child=serializers.CharField(max_length=80), required=False)
+    tags_text = serializers.CharField(required=False, allow_blank=True)
+    occasions = serializers.ListField(child=serializers.CharField(max_length=80), required=False)
+    occasions_text = serializers.CharField(required=False, allow_blank=True)
+    price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    mrp = serializers.DecimalField(max_digits=12, decimal_places=2)
+    cost_price = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, allow_null=True)
+    stock_qty = serializers.IntegerField(min_value=0, default=1)
+    sku = serializers.CharField(max_length=60, required=False, allow_blank=True)
+    color_name = serializers.CharField(max_length=60, required=False, allow_blank=True)
+    color_hex = serializers.CharField(max_length=16, required=False, allow_blank=True)
+    size = serializers.CharField(max_length=40, required=False, allow_blank=True)
+    fabric = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    zari_type = serializers.CharField(max_length=80, required=False, allow_blank=True)
+    blouse_included = serializers.BooleanField(default=True)
+    image_url = serializers.URLField(max_length=600, required=False, allow_blank=True)
+    alt_text = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    deal_label = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    is_featured = serializers.BooleanField(default=False)
+    is_active = serializers.BooleanField(default=True)
+    assured = serializers.BooleanField(default=True)
+    cod_available = serializers.BooleanField(default=True)
+    exchange_available = serializers.BooleanField(default=True)
+    return_days = serializers.IntegerField(min_value=0, max_value=60, default=15)
+
+    def validate(self, attrs):
+        if attrs["mrp"] < attrs["price"]:
+            raise serializers.ValidationError({"mrp": "MRP must be greater than or equal to selling price."})
+        if attrs.get("slug") and Product.objects.filter(slug=attrs["slug"]).exists():
+            raise serializers.ValidationError({"slug": "A product with this slug already exists."})
+        if attrs.get("sku") and ProductVariant.objects.filter(sku=attrs["sku"]).exists():
+            raise serializers.ValidationError({"sku": "A variant with this SKU already exists."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        gender = validated_data["gender"]
+        category_slug = validated_data.get("category_slug") or slugify(validated_data["category_name"])
+        category, _ = Category.objects.get_or_create(
+            slug=category_slug,
+            defaults={
+                "name": validated_data["category_name"],
+                "gender": gender,
+                "is_active": True,
+            },
+        )
+        if category.name != validated_data["category_name"] or category.gender != gender or not category.is_active:
+            category.name = validated_data["category_name"]
+            category.gender = gender
+            category.is_active = True
+            category.save(update_fields=["name", "gender", "is_active"])
+
+        collection = None
+        collection_name = validated_data.get("collection_name", "").strip()
+        if collection_name:
+            collection_slug = validated_data.get("collection_slug") or slugify(collection_name)
+            collection, _ = Collection.objects.get_or_create(
+                slug=collection_slug,
+                defaults={
+                    "name": collection_name,
+                    "description": validated_data.get("collection_description", ""),
+                    "is_featured": validated_data["is_featured"],
+                },
+            )
+            collection.name = collection_name
+            collection.description = validated_data.get("collection_description", collection.description)
+            collection.is_featured = collection.is_featured or validated_data["is_featured"]
+            collection.save(update_fields=["name", "description", "is_featured"])
+
+        tags = validated_data.get("tags") or _split_text(validated_data.get("tags_text"))
+        occasions = validated_data.get("occasions") or _split_text(validated_data.get("occasions_text"))
+        fabric = validated_data.get("fabric", "").strip()
+        color_name = validated_data.get("color_name", "").strip()
+        if fabric and fabric not in tags:
+            tags.append(fabric)
+        if color_name and color_name not in tags:
+            tags.append(color_name)
+
+        price = validated_data["price"]
+        mrp = validated_data["mrp"] or price
+        product_slug = validated_data.get("slug") or _unique_slug(Product, validated_data["name"])
+        product = Product.objects.create(
+            name=validated_data["name"],
+            slug=product_slug,
+            category=category,
+            gender=gender,
+            hook=validated_data.get("hook", ""),
+            description=validated_data.get("description", ""),
+            tags=tags,
+            occasions=occasions,
+            base_price=price,
+            base_mrp=mrp,
+            deal_label=validated_data.get("deal_label", ""),
+            key_highlights=[
+                item
+                for item in [
+                    "Pure silk textile",
+                    fabric,
+                    color_name,
+                    "Ready to ship stock",
+                ]
+                if item
+            ],
+            specifications={
+                "Fabric": fabric or "Pure silk",
+                "Color": color_name or "Assorted",
+                "Blouse": "Included" if validated_data.get("blouse_included") else "Not included",
+                "Seller": "CSM Silks Kanchipuram",
+            },
+            return_days=validated_data["return_days"],
+            cod_available=validated_data["cod_available"],
+            exchange_available=validated_data["exchange_available"],
+            assured=validated_data["assured"],
+            is_active=validated_data["is_active"],
+            is_featured=validated_data["is_featured"],
+        )
+        if collection:
+            product.collections.add(collection)
+
+        sku = validated_data.get("sku") or _unique_sku(f"CSM{product.id}{product.slug[:14]}")
+        variant = ProductVariant.objects.create(
+            product=product,
+            sku=sku,
+            title=f"{color_name or 'Default'} {validated_data.get('size') or ''}".strip(),
+            color_name=color_name,
+            color_hex=validated_data.get("color_hex", "") or "#C4923A",
+            size=validated_data.get("size", ""),
+            fabric=fabric,
+            zari_type=validated_data.get("zari_type", ""),
+            blouse_included=validated_data.get("blouse_included", True),
+            price=price,
+            mrp=mrp,
+            cost_price=validated_data.get("cost_price") or Decimal("0.00"),
+            stock_qty=validated_data["stock_qty"],
+            reorder_level=5,
+            is_active=True,
+        )
+        request = self.context.get("request")
+        StockLedger.objects.create(
+            variant=variant,
+            quantity_delta=validated_data["stock_qty"],
+            reason=StockLedger.Reason.ADJUSTMENT,
+            reference="admin-quick-create",
+            note="Opening stock from admin catalog publish",
+            created_by=request.user if request and request.user.is_authenticated else None,
+        )
+
+        image_url = validated_data.get("image_url", "").strip()
+        if image_url:
+            ProductImage.objects.create(
+                product=product,
+                variant=variant,
+                image_url=image_url,
+                alt_text=validated_data.get("alt_text") or product.name,
+                sort_order=0,
+                is_primary=True,
+            )
+        return product
 
 
 class AdminVariantWriteSerializer(serializers.ModelSerializer):

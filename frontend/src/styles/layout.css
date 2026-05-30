@@ -86,7 +86,7 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  flex: 1;
+  flex: 0 0 auto;
 }
 .nav-location {
   display: inline-flex;
@@ -103,6 +103,39 @@
   white-space: nowrap;
 }
 .nav-location svg { color: var(--gold); }
+.nav-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 420px;
+  max-width: 560px;
+  height: 42px;
+  padding: 0 5px 0 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--muted);
+  box-shadow: 0 8px 20px rgba(43, 27, 10, .06);
+}
+.nav-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+}
+.nav-search button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--gold);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+}
 .nav-link,
 .mm-link {
   display: inline-flex;
@@ -199,10 +232,10 @@
 }
 
 .hero {
-  min-height: calc(100vh - 180px);
+  min-height: 520px;
   display: flex;
   align-items: center;
-  padding: 38px 4vw;
+  padding: 26px 4vw 34px;
   background:
     linear-gradient(135deg, rgba(132,32,51,.09), transparent 36%),
     linear-gradient(315deg, rgba(12,96,79,.12), transparent 38%),
@@ -210,8 +243,8 @@
 }
 .hero-content {
   display: grid;
-  grid-template-columns: minmax(0, .98fr) minmax(360px, .72fr);
-  gap: 46px;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, .58fr);
+  gap: 30px;
   width: 100%;
   max-width: 1220px;
   margin: 0 auto;
@@ -221,13 +254,13 @@
   max-width: 620px;
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 86px;
+  font-size: 58px;
   font-weight: 400;
-  line-height: .95;
+  line-height: 1;
 }
 .hero-lede {
   max-width: 620px;
-  margin-top: 18px;
+  margin-top: 12px;
   color: var(--muted);
   font-size: 18px;
   line-height: 1.7;
@@ -236,7 +269,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-top: 24px;
+  margin-top: 18px;
 }
 .hero-search {
   display: flex;
@@ -252,6 +285,36 @@
   color: var(--muted);
   box-shadow: var(--shadow);
   cursor: pointer;
+}
+.hero-market-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+  max-width: 720px;
+}
+.hero-market-row button {
+  min-height: 84px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,.78);
+  color: var(--ink);
+  text-align: left;
+}
+.hero-market-row strong,
+.hero-market-row span {
+  display: block;
+}
+.hero-market-row strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+.hero-market-row span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 .hero-showcase {
   position: relative;
@@ -279,7 +342,7 @@
   font-weight: 800;
   text-transform: uppercase;
 }
-.hero-visual { height: 340px; }
+.hero-visual { height: 300px; }
 .hero-showcase-info {
   padding-top: 14px;
 }
@@ -495,10 +558,12 @@
 @media (max-width: 1020px) {
   .hero-content,
   .split-section { grid-template-columns: 1fr; }
-  .hero-copy h1 { font-size: 64px; }
+  .hero-copy h1 { font-size: 50px; }
+  .hero-market-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trust-band,
   .collection-grid,
   .footer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .nav-links { display: none; }
 }
 @media (max-width: 760px) {
   .nav { height: 64px; padding: 0 16px; }
@@ -510,18 +575,20 @@
   .ticker .ti:nth-child(n+3) { display: none; }
   .nav-links,
   .nav-location,
+  .nav-search,
   .nav-cta,
   .nav-actions .nav-icon-btn:first-child,
   .nav-actions .nav-icon-btn:nth-child(2) { display: none; }
   .nav-mob-menu { display: grid; }
   .brand-name { font-size: 21px; }
   .hero { min-height: auto; padding: 38px 20px 58px; }
-  .hero-copy h1 { font-size: 52px; }
+  .hero-copy h1 { font-size: 42px; }
   .hero-lede { font-size: 16px; }
   .hero-visual { height: 300px; }
   .hero-mini-panel { position: static; margin-top: 12px; max-width: none; }
   .trust-band,
   .collection-grid,
+  .hero-market-row,
   .footer-grid,
   .compact-products { grid-template-columns: 1fr; }
   .footer-bottom { flex-direction: column; }

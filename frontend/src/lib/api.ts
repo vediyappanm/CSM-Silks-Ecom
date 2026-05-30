@@ -1,4 +1,17 @@
-import type { Address, CartResponse, CatalogFacets, DeliveryCheck, Order, PaginatedResponse, Product, ProductReview, User } from '@/types';
+import type {
+  Address,
+  AdminProductQuickCreatePayload,
+  CartResponse,
+  CatalogCategory,
+  CatalogCollection,
+  CatalogFacets,
+  DeliveryCheck,
+  Order,
+  PaginatedResponse,
+  Product,
+  ProductReview,
+  User,
+} from '@/types';
 
 const API_BASE = '/api';
 const ACCESS_KEY = 'csm_access_token';
@@ -79,6 +92,8 @@ export const api = {
       const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
       return request<CatalogFacets>(`/catalog/facets${qs}`);
     },
+    categories: () => request<CatalogCategory[]>('/categories'),
+    collections: () => request<CatalogCollection[]>('/collections'),
     delivery: (slug: string, pin_code: string) =>
       request<DeliveryCheck>(`/products/${slug}/delivery?pin_code=${encodeURIComponent(pin_code)}`),
     reviews: {
@@ -205,7 +220,22 @@ export const api = {
 
   admin: {
     dashboard: () => request<AdminDashboardResponse>('/admin/dashboard'),
-    products: () => request<PaginatedResponse<Product>>('/admin/products'),
+    products: async () => {
+      const data = await request<PaginatedResponse<Product>>('/admin/products');
+      return { ...data, items: data.items.map(normalizeProduct) };
+    },
+    categories: () => request<CatalogCategory[]>('/admin/categories'),
+    collections: () => request<CatalogCollection[]>('/admin/collections'),
+    createCollection: (data: Partial<CatalogCollection>) =>
+      request<CatalogCollection>('/admin/collections', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    createProductQuick: async (data: AdminProductQuickCreatePayload) =>
+      normalizeProduct(await request<Product>('/admin/products/quick-create', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      })),
     orders: () => request<{ items: Order[]; total: number }>('/admin/orders'),
     inventory: () => request<JsonMap[]>('/admin/inventory'),
     customers: () => request<JsonMap[]>('/admin/customers'),

@@ -3,21 +3,27 @@ from __future__ import annotations
 from datetime import timedelta
 from math import ceil
 
+from django.db.models import Max, Min
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db.models import Max, Min
 from rest_framework import status
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Category, Product, ProductVariant
+from .models import Category, Collection, Product, ProductImage, ProductVariant
 from .selectors import product_base_queryset, public_products
 from .serializers import (
+    AdminCategoryWriteSerializer,
+    AdminCollectionWriteSerializer,
+    AdminProductImageWriteSerializer,
+    AdminProductQuickCreateSerializer,
     AdminProductWriteSerializer,
     AdminVariantWriteSerializer,
     CategorySerializer,
+    CollectionSerializer,
     ProductDetailSerializer,
+    ProductImageSerializer,
     ProductListSerializer,
     ProductVariantSerializer,
 )
@@ -51,6 +57,12 @@ class CategoryListView(APIView):
     def get(self, request):
         categories = Category.objects.filter(is_active=True).order_by("sort_order", "name")
         return Response(CategorySerializer(categories, many=True).data)
+
+
+class CollectionListView(APIView):
+    def get(self, request):
+        collections = Collection.objects.order_by("sort_order", "name")
+        return Response(CollectionSerializer(collections, many=True).data)
 
 
 class CatalogFacetsView(APIView):
@@ -136,6 +148,16 @@ class AdminProductListCreateView(APIView):
         return Response(ProductDetailSerializer(product_base_queryset().get(id=product.id)).data, status=status.HTTP_201_CREATED)
 
 
+class AdminProductQuickCreateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request):
+        serializer = AdminProductQuickCreateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        product = serializer.save()
+        return Response(ProductDetailSerializer(product_base_queryset().get(id=product.id)).data, status=status.HTTP_201_CREATED)
+
+
 class AdminProductDetailView(APIView):
     permission_classes = [IsAdminUser]
 
@@ -175,3 +197,45 @@ class AdminVariantDetailView(APIView):
         serializer = AdminVariantWriteSerializer(variant, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         return Response(ProductVariantSerializer(serializer.save()).data)
+
+
+class AdminCategoryListCreateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        categories = Category.objects.order_by("sort_order", "name")
+        return Response(CategorySerializer(categories, many=True).data)
+
+    def post(self, request):
+        serializer = AdminCategoryWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        return Response(CategorySerializer(category).data, status=status.HTTP_201_CREATED)
+
+
+class AdminCollectionListCreateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        collections = Collection.objects.order_by("sort_order", "name")
+        return Response(CollectionSerializer(collections, many=True).data)
+
+    def post(self, request):
+        serializer = AdminCollectionWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        collection = serializer.save()
+        return Response(CollectionSerializer(collection).data, status=status.HTTP_201_CREATED)
+
+
+class AdminProductImageListCreateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        images = ProductImage.objects.select_related("product", "variant").order_by("-id")[:200]
+        return Response(ProductImageSerializer(images, many=True).data)
+
+    def post(self, request):
+        serializer = AdminProductImageWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        image = serializer.save()
+        return Response(ProductImageSerializer(image).data, status=status.HTTP_201_CREATED)

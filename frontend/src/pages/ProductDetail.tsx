@@ -24,6 +24,8 @@ export function ProductDetail() {
     api.products.get(id)
       .then((item) => {
         setProduct(item);
+        setSelectedThumb(0);
+        setSelectedColor(0);
         return Promise.allSettled([
           api.products.reviews.list(item.slug).then(setReviews),
           api.products.delivery(item.slug, '600001').then(setDelivery),
@@ -55,7 +57,12 @@ export function ProductDetail() {
 
   const p = product;
   const variant = p.variants?.[selectedColor] || p.variants?.[0];
-  const disc = p.mrp ? Math.round((1 - p.price / p.mrp) * 100) : 0;
+  const activePrice = Number(variant?.price || p.price || 0);
+  const activeMrp = Number(variant?.mrp || p.mrp || activePrice);
+  const activeStock = Number(variant?.available_qty ?? p.available_qty ?? 0);
+  const disc = activeMrp ? Math.round((1 - activePrice / activeMrp) * 100) : 0;
+  const imageList = p.images?.length ? p.images : [];
+  const selectedImage = imageList[selectedThumb];
   const attrs = p.gender === 'men'
     ? [['Material', variant?.fabric || 'Pure Silk'], ['Zari', variant?.zari_type || 'Gold Zari'], ['Size', variant?.size || 'S to 5XL'], ['Care', variant?.care_instructions || 'Dry Clean Only']]
     : [['Fabric', variant?.fabric || 'Pure Silk'], ['Zari', variant?.zari_type || 'Gold Zari'], ['Occasion', (p.occasions || []).join(' / ') || 'Bridal / Festive'], ['Blouse Piece', variant?.blouse_included ? 'Included' : 'Not included']];
@@ -63,10 +70,12 @@ export function ProductDetail() {
   const inWish = isInWishlist(p.id);
 
   const handleAddToCart = () => {
+    if (activeStock <= 0) return;
     void addToCart({ ...p, variant_id: variant?.id || p.variant_id });
   };
 
   const handleBuyNow = () => {
+    if (activeStock <= 0) return;
     void addToCart({ ...p, variant_id: variant?.id || p.variant_id });
     navigate('/cart');
   };
@@ -82,7 +91,7 @@ export function ProductDetail() {
       <div className="pd-grid">
         <div className="pd-gallery">
           <div className="pd-main-img">
-            <ProductVisual product={p} className="detail-visual" />
+            <ProductVisual product={p} className="detail-visual" imageUrl={selectedImage} />
           </div>
           <div className="pd-thumbs">
             {(p.images?.length ? p.images : p.colors || ['#7a1e1e', '#c4923a', '#0f5b45']).slice(0, 4).map((value, i) => (
@@ -104,14 +113,14 @@ export function ProductDetail() {
           </div>
           <div className="pd-badges">
             <span className="pd-badge pdb-gold">{p.cat}</span>
-            <span className="pd-badge pdb-grn">{(p.available_qty || 0) > 0 ? 'In Stock' : 'Sold Out'}</span>
+            <span className="pd-badge pdb-grn">{activeStock > 0 ? `${activeStock} In Stock` : 'Sold Out'}</span>
             {p.assured && <span className="pd-badge pdb-blu">CSM Assured</span>}
             {p.is_gi_tagged && <span className="pd-badge pdb-blu">GI Tagged</span>}
           </div>
           <h1 className="pd-title">{p.name}</h1>
           <div className="pd-price-row">
-            <div className="pd-price">Rs {p.price.toLocaleString('en-IN')}</div>
-            <div className="pd-mrp">Rs {p.mrp.toLocaleString('en-IN')}</div>
+            <div className="pd-price">Rs {activePrice.toLocaleString('en-IN')}</div>
+            <div className="pd-mrp">Rs {activeMrp.toLocaleString('en-IN')}</div>
             <div className="pd-off">{disc}% OFF</div>
           </div>
           <div className="pd-rating">
@@ -171,12 +180,12 @@ export function ProductDetail() {
             <button className="pd-btn-try" onClick={() => navigate('/tryon')}>
               {p.gender === 'men' ? 'View on Model' : 'AI Try-On'}
             </button>
-            <button className="pd-btn-cart" onClick={handleAddToCart}>
-              Add to Cart
+            <button className="pd-btn-cart" onClick={handleAddToCart} disabled={activeStock <= 0}>
+              {activeStock > 0 ? 'Add to Cart' : 'Sold Out'}
             </button>
           </div>
-          <button className="pd-btn-buy" onClick={handleBuyNow}>
-            Buy Now - Rs {p.price.toLocaleString('en-IN')}
+          <button className="pd-btn-buy" onClick={handleBuyNow} disabled={activeStock <= 0}>
+            {activeStock > 0 ? `Buy Now - Rs ${activePrice.toLocaleString('en-IN')}` : 'Currently unavailable'}
           </button>
           <div className="pd-guarantee">
             <div className="pd-g">Free {p.gender === 'men' ? 'matching piece' : 'blouse'} included where applicable</div>

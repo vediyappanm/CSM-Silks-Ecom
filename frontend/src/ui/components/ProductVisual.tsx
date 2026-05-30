@@ -5,11 +5,12 @@ interface ProductVisualProps {
   product?: Partial<Product>;
   label?: string;
   className?: string;
+  imageUrl?: string;
 }
 
-export function ProductVisual({ product, label = 'CSM', className = '' }: ProductVisualProps) {
+export function ProductVisual({ product, label = 'CSM', className = '', imageUrl }: ProductVisualProps) {
   const colors = product?.colors?.length ? product.colors : ['#7a1e1e', '#c4923a', '#0f5b45'];
-  const imageUrl = product?.images?.[0];
+  const visualUrl = imageUrl || product?.images?.[0];
   const style = {
     '--pv-a': colors[0] || '#7a1e1e',
     '--pv-b': colors[1] || '#c4923a',
@@ -17,9 +18,9 @@ export function ProductVisual({ product, label = 'CSM', className = '' }: Produc
   } as CSSProperties;
 
   return (
-    <div className={`product-visual ${imageUrl ? 'has-photo' : ''} ${className}`} style={style}>
-      {imageUrl ? (
-        <img src={imageUrl} alt={product?.name || 'CSM silk textile'} loading="lazy" />
+    <div className={`product-visual ${visualUrl ? 'has-photo' : ''} ${className}`} style={style}>
+      {visualUrl ? (
+        <img src={visualUrl} alt={product?.name || 'CSM silk textile'} loading="lazy" />
       ) : (
         <>
           <div className="product-visual-weave" />

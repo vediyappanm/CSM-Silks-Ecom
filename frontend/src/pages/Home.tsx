@@ -45,9 +45,9 @@ export function Home() {
       <section className="hero">
         <div className="hero-content">
           <div className="hero-copy">
-            <h1>CSM Silks</h1>
+            <h1>CSM Silks online store</h1>
             <p className="hero-lede">
-              Pure Kanjivaram sarees and men's silk wear with real stock, GST invoices,
+              Shop pure Kanjivaram sarees and men's silk wear with live stock, GST invoices,
               secure checkout, and order tracking.
             </p>
             <div className="hero-actions">
@@ -61,6 +61,14 @@ export function Home() {
             <div className="hero-search" onClick={() => navigate('/search')}>
               <Search size={18} />
               <span>Search sarees, dhotis, silk shirts, festive colors</span>
+            </div>
+            <div className="hero-market-row">
+              {collectionTiles.map((tile) => (
+                <button key={tile.title} onClick={() => navigate(tile.path)}>
+                  <strong>{tile.title}</strong>
+                  <span>{tile.text}</span>
+                </button>
+              ))}
             </div>
           </div>
 

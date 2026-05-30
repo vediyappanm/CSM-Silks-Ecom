@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Search as SearchIcon } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
@@ -8,7 +8,8 @@ import type { CatalogFacets, Product } from '@/types';
 
 export function Search() {
   const navigate = useNavigate();
-  const [query, setQuery] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState(searchParams.get('q') || '');
   const [results, setResults] = useState<Product[]>([]);
   const [facets, setFacets] = useState<CatalogFacets | null>(null);
   const [sort, setSort] = useState('popularity');
@@ -36,6 +37,19 @@ export function Search() {
     return () => window.clearTimeout(id);
   }, [query, sort, rating, maxPrice, inStock]);
 
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setQuery(searchParams.get('q') || '');
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [searchParams]);
+
+  const runSearch = (value: string) => {
+    const next = value.trim();
+    setQuery(next);
+    setSearchParams(next ? { q: next } : {});
+  };
+
   const chips = ['Kanjivaram', 'Bridal', 'Men', 'Festive', 'Dhoti', 'Daily'];
 
   return (
@@ -59,12 +73,12 @@ export function Search() {
             placeholder="Search sarees, silk shirts, dhotis..."
             autoFocus
           />
-          <button onClick={() => setQuery(query.trim())}>Search</button>
+          <button onClick={() => runSearch(query)}>Search</button>
         </div>
 
         <div className="quick-chips">
           {chips.map((chip) => (
-            <button key={chip} onClick={() => setQuery(chip)}>{chip}</button>
+            <button key={chip} onClick={() => runSearch(chip)}>{chip}</button>
           ))}
         </div>
 

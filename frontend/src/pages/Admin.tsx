@@ -1,6 +1,15 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import type { Order, Product, User } from '@/types';
+import {
+  AlertTriangle,
+  BarChart3,
+  Boxes,
+  FileText,
+  ShoppingBag,
+  Users,
+} from 'lucide-react';
+import { AdminCatalogManager } from '@/features/admin/components/AdminCatalogManager';
+import type { Order, User } from '@/types';
 
 type AdminPage = 'dashboard' | 'orders' | 'products' | 'customers' | 'reports' | 'unsold';
 type Kpis = Record<string, number | string>;
@@ -21,6 +30,13 @@ type UnsoldData = { count: number; items: UnsoldRow[] };
 
 function isAdminUser(user?: User | null) {
   return user?.role === 'admin' || user?.role === 'super_admin';
+}
+
+function adminStatusClass(status?: string) {
+  if (status === 'delivered') return 'st-delivered';
+  if (status === 'cancelled' || status === 'refunded' || status === 'returned') return 'st-pending';
+  if (status === 'shipped' || status === 'out_for_delivery') return 'st-shipped';
+  return 'st-processing';
 }
 
 export function Admin() {
@@ -87,12 +103,12 @@ export function Admin() {
   }
 
   const nav = [
-    ['dashboard', 'Dashboard'],
-    ['orders', 'Orders'],
-    ['products', 'Products'],
-    ['customers', 'Customers'],
-    ['reports', 'Reports'],
-    ['unsold', 'Unsold Stock'],
+    { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+    { key: 'orders', label: 'Orders', icon: ShoppingBag },
+    { key: 'products', label: 'Catalog', icon: Boxes },
+    { key: 'customers', label: 'Customers', icon: Users },
+    { key: 'reports', label: 'Reports', icon: FileText },
+    { key: 'unsold', label: 'Stock Alerts', icon: AlertTriangle },
   ] as const;
 
   return (
@@ -105,9 +121,9 @@ export function Admin() {
         </div>
         <div className="admin-nav">
           <div className="nav-group">Operations</div>
-          {nav.map(([key, label]) => (
+          {nav.map(({ key, label, icon: Icon }) => (
             <div key={key} className={`nav-item ${page === key ? 'active' : ''}`} onClick={() => setPage(key)}>
-              <span className="nav-icon">CSM</span>{label}
+              <Icon className="nav-icon" size={17} /> <span>{label}</span>
             </div>
           ))}
         </div>
@@ -121,7 +137,7 @@ export function Admin() {
         <div className="admin-content">
           {page === 'dashboard' && <AdminDashboard />}
           {page === 'orders' && <AdminOrders />}
-          {page === 'products' && <AdminProducts />}
+          {page === 'products' && <AdminCatalogManager />}
           {page === 'customers' && <AdminCustomers />}
           {page === 'reports' && <AdminReports />}
           {page === 'unsold' && <AdminUnsold />}
@@ -182,7 +198,7 @@ function AdminOrderTable({ orders, onStatus }: { orders: AdminOrderRow[]; onStat
             <td>{o.order_number}</td>
             <td>{o.customer || o.shipping_address_snapshot?.full_name || '-'}</td>
             <td>Rs {Number(o.total || o.total_amount || 0).toLocaleString('en-IN')}</td>
-            <td><span className="status-badge st-processing">{o.status}</span></td>
+            <td><span className={`status-badge ${adminStatusClass(o.status)}`}>{o.status}</span></td>
             <td>{o.created_at ? new Date(o.created_at).toLocaleDateString('en-IN') : '-'}</td>
             <td>
               {onStatus && (
@@ -199,29 +215,6 @@ function AdminOrderTable({ orders, onStatus }: { orders: AdminOrderRow[]; onStat
         ))}
       </tbody>
     </table>
-  );
-}
-
-function AdminProducts() {
-  const [products, setProducts] = useState<Product[]>([]);
-  useEffect(() => { api.admin.products().then(data => setProducts(data.items)).catch(() => setProducts([])); }, []);
-  return (
-    <div className="chart-card">
-      <table className="admin-table">
-        <thead><tr><th>Product</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th></tr></thead>
-        <tbody>
-          {products.map(p => (
-            <tr key={p.id}>
-              <td>{p.name}</td>
-              <td>{p.cat}</td>
-              <td>Rs {Number(p.price).toLocaleString('en-IN')}</td>
-              <td>{p.available_qty || 0}</td>
-              <td><span className="status-badge st-delivered">{p.available_qty ? 'Active' : 'Out'}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }
 

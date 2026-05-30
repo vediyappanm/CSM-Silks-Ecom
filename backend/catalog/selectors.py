@@ -13,6 +13,7 @@ def product_base_queryset() -> QuerySet[Product]:
         .prefetch_related(
             Prefetch("variants", queryset=ProductVariant.objects.order_by("id")),
             Prefetch("images", queryset=ProductImage.objects.order_by("sort_order", "id")),
+            "collections",
         )
     )
 
@@ -21,6 +22,7 @@ def public_products(params) -> QuerySet[Product]:
     qs = product_base_queryset().filter(is_active=True)
     gender = params.get("gender")
     category = params.get("category")
+    collection = params.get("collection")
     search = params.get("search") or params.get("q")
     featured = params.get("featured")
     min_price = params.get("min_price")
@@ -35,7 +37,9 @@ def public_products(params) -> QuerySet[Product]:
     if gender:
         qs = qs.filter(gender=gender)
     if category:
-        qs = qs.filter(Q(category__slug=category) | Q(tags__icontains=category))
+        qs = qs.filter(Q(category__slug=category) | Q(collections__slug=category) | Q(tags__icontains=category)).distinct()
+    if collection:
+        qs = qs.filter(collections__slug=collection).distinct()
     if featured is not None and featured != "":
         qs = qs.filter(is_featured=str(featured).lower() in {"1", "true", "yes"})
     if search:

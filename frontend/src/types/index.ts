@@ -17,6 +17,24 @@ export interface ProductVariant {
   is_active?: boolean;
 }
 
+export interface CatalogCategory {
+  id: number;
+  name: string;
+  slug: string;
+  gender: Product['gender'];
+  parent_id?: number | null;
+  sort_order?: number;
+}
+
+export interface CatalogCollection {
+  id: number;
+  name: string;
+  slug: string;
+  description?: string;
+  is_featured?: boolean;
+  sort_order?: number;
+}
+
 export interface Product {
   id: number;
   slug: string;
@@ -43,6 +61,7 @@ export interface Product {
   tags: string[];
   occasions?: string[];
   images?: string[];
+  collections?: CatalogCollection[];
   variants?: ProductVariant[];
   available_qty?: number;
   is_featured?: boolean;
@@ -60,6 +79,41 @@ export interface Product {
   avg_rating?: number | string;
   review_count?: number;
   total_sold?: number;
+}
+
+export interface AdminProductQuickCreatePayload {
+  name: string;
+  slug?: string;
+  gender: Product['gender'];
+  category_name: string;
+  category_slug?: string;
+  collection_name?: string;
+  collection_slug?: string;
+  collection_description?: string;
+  hook?: string;
+  description?: string;
+  tags_text?: string;
+  occasions_text?: string;
+  price: number;
+  mrp: number;
+  cost_price?: number;
+  stock_qty: number;
+  sku?: string;
+  color_name?: string;
+  color_hex?: string;
+  size?: string;
+  fabric?: string;
+  zari_type?: string;
+  blouse_included?: boolean;
+  image_url?: string;
+  alt_text?: string;
+  deal_label?: string;
+  is_featured?: boolean;
+  is_active?: boolean;
+  assured?: boolean;
+  cod_available?: boolean;
+  exchange_available?: boolean;
+  return_days?: number;
 }
 
 export interface CartItem extends Product {
@@ -190,7 +244,7 @@ export interface Toast {
 }
 
 export interface CatalogFacets {
-  categories: Array<{ id: number; name: string; slug: string; gender: Product['gender'] }>;
+  categories: CatalogCategory[];
   colors: Array<{ color_name: string; color_hex: string }>;
   fabrics: string[];
   occasions: string[];
