@@ -18,6 +18,7 @@ from shipping.models import ShipmentEvent
 User = get_user_model()
 
 
+@override_settings(RAZORPAY_KEY_ID="", RAZORPAY_KEY_SECRET="", RAZORPAY_WEBHOOK_SECRET="")
 class CheckoutFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()

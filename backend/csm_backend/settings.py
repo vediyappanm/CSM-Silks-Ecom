@@ -8,6 +8,13 @@ from urllib.parse import urlparse
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
+
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-min-32-chars!!")
 DEBUG = os.getenv("DEBUG", "True").lower() in {"1", "true", "yes", "on"}
 APP_ENV = os.getenv("APP_ENV", "development")
