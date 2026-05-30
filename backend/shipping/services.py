@@ -6,7 +6,7 @@ import uuid
 from django.conf import settings
 from django.utils import timezone
 
-from notifications.models import Notification
+from notifications.services import create_notification
 from orders.models import Order
 
 from .models import Shipment, ShipmentEvent
@@ -157,7 +157,7 @@ def apply_shipment_update(shipment: Shipment, *, event_location: str = "", event
                 **(shipment.raw_payload or {}),
             },
         )
-        Notification.objects.create(
+        create_notification(
             user=order.user,
             title="Order tracking updated",
             body=f"{order.order_number} is now {order.status.replace('_', ' ')}.",

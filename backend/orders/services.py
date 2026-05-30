@@ -11,7 +11,7 @@ from accounts.models import Address
 from cart.models import Cart
 from inventory.models import StockLedger, StockReservation
 from loyalty.models import LoyaltyTransaction
-from notifications.models import Notification
+from notifications.services import create_notification
 from payments.models import Payment
 
 from .models import Order, OrderItem
@@ -137,7 +137,7 @@ def create_order_from_cart(user, address_id: int, coupon_code: str = "", loyalty
         status=Payment.Status.CAPTURED if payment_method == Order.PaymentMethod.COD else Payment.Status.PENDING,
         paid_at=timezone.now() if payment_method == Order.PaymentMethod.COD else None,
     )
-    Notification.objects.create(
+    create_notification(
         user=user,
         title="Order placed",
         body=f"Your CSM Silks order {order.order_number} has been placed.",

@@ -202,5 +202,9 @@ SHIPROCKET_PACKAGE_HEIGHT_CM = float(os.getenv("SHIPROCKET_PACKAGE_HEIGHT_CM", "
 SHIPROCKET_PACKAGE_WEIGHT_KG = float(os.getenv("SHIPROCKET_PACKAGE_WEIGHT_KG", "0.5"))
 DEFAULT_COURIER_PROVIDER = os.getenv("DEFAULT_COURIER_PROVIDER", "manual")
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
+NOTIFICATION_EMAIL_ENABLED = os.getenv("NOTIFICATION_EMAIL_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
+
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
 OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))
