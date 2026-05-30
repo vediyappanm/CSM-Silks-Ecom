@@ -5,6 +5,50 @@ import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
 import type { Order } from '@/types';
 
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  prefill: { name: string; contact: string; email?: string };
+  handler: (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => void;
+  modal: { ondismiss: () => void };
+  theme: { color: string };
+};
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function loadRazorpayScript() {
+  return new Promise<boolean>((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve(true), { once: true });
+      existing.addEventListener('error', () => resolve(false), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export function Orders() {
   const navigate = useNavigate();
   const { showToast, isAuthed } = useApp();
@@ -41,6 +85,58 @@ export function Orders() {
     }
   };
 
+  const retryPayment = async (order: Order) => {
+    try {
+      const rz = await api.payments.createRazorpayOrder(order.id);
+      if (rz.key) {
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout');
+        const RazorpayCtor = window.Razorpay as unknown as new (options: RazorpayOptions) => { open: () => void };
+        await new Promise<void>((resolve, reject) => {
+          new RazorpayCtor({
+            key: rz.key || '',
+            amount: rz.amount,
+            currency: rz.currency,
+            name: 'CSM Silks',
+            description: order.order_number,
+            order_id: rz.razorpay_order_id,
+            prefill: { name: 'CSM Customer', contact: '' },
+            handler: async (response) => {
+              try {
+                await api.payments.verify(response);
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
+            },
+            modal: { ondismiss: () => reject(new Error('Payment was not completed')) },
+            theme: { color: '#b9842e' },
+          }).open();
+        });
+      } else {
+        await api.payments.verify({
+          razorpay_order_id: rz.razorpay_order_id,
+          razorpay_payment_id: `pay_retry_${Date.now()}`,
+          razorpay_signature: 'dev',
+        });
+      }
+      const refreshed = await api.orders.get(order.id);
+      setOrders(prev => prev.map(item => item.id === refreshed.id ? refreshed : item));
+      showToast('OK', 'Payment confirmed', `${order.order_number} is confirmed`);
+    } catch (err) {
+      showToast('!', 'Payment retry failed', err instanceof Error ? err.message : 'Unable to retry payment');
+    }
+  };
+
+  const downloadInvoice = async (order: Order) => {
+    try {
+      const blob = await api.orders.invoice(order.id);
+      saveBlob(blob, `invoice-${order.order_number}.html`);
+    } catch (err) {
+      showToast('!', 'Invoice failed', err instanceof Error ? err.message : 'Unable to download invoice');
+    }
+  };
+
   const statusClass: Record<string, string> = {
     packed: 'os-processing',
     shipped: 'os-shipped',
@@ -51,6 +147,9 @@ export function Orders() {
     return_initiated: 'os-pending',
     returned: 'os-pending',
     refunded: 'os-delivered',
+    delivery_failed: 'os-pending',
+    rto_initiated: 'os-pending',
+    rto_delivered: 'os-pending',
     payment_pending: 'os-pending',
     pending: 'os-pending',
     cancelled: 'os-pending',
@@ -65,6 +164,9 @@ export function Orders() {
     return_initiated: 'Return Initiated',
     returned: 'Returned',
     refunded: 'Refunded',
+    delivery_failed: 'Delivery Failed',
+    rto_initiated: 'Returning to Seller',
+    rto_delivered: 'Returned to Seller',
     payment_pending: 'Payment Pending',
     pending: 'Pending',
     cancelled: 'Cancelled',
@@ -106,9 +208,14 @@ export function Orders() {
                 <div className="oc-price">Rs {Number(o.total_amount).toLocaleString('en-IN')}</div>
               </div>
               <div className="oc-actions">
-                {['shipped', 'out_for_delivery', 'delivered'].includes(o.status) && (
+                {['shipped', 'out_for_delivery', 'delivered', 'delivery_failed', 'rto_initiated', 'rto_delivered'].includes(o.status) && (
                   <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }}>
                     Track Order
+                  </button>
+                )}
+                {o.status === 'payment_pending' && (
+                  <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); void retryPayment(o); }}>
+                    Retry Payment
                   </button>
                 )}
                 {o.status === 'delivered' && (
@@ -126,7 +233,7 @@ export function Orders() {
                     Return
                   </button>
                 )}
-                <button className="oc-btn oc-btn-invoice" onClick={(e) => { e.stopPropagation(); showToast('OK', 'Invoice', `Invoice for ${o.order_number} is available in admin v1`); }}>
+                <button className="oc-btn oc-btn-invoice" onClick={(e) => { e.stopPropagation(); void downloadInvoice(o); }}>
                   Invoice
                 </button>
               </div>

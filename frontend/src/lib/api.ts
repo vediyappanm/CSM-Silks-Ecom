@@ -74,6 +74,20 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+async function download(endpoint: string): Promise<Blob> {
+  const token = getAccessToken();
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || err.message || `API error: ${res.status}`);
+  }
+  return res.blob();
+}
+
 export const api = {
   tokens: { getAccessToken, setTokens, clearTokens },
 
@@ -186,6 +200,7 @@ export const api = {
       }),
     cancel: (orderId: string | number) =>
       request<Order>(`/orders/${orderId}/cancel`, { method: 'POST' }),
+    invoice: (orderId: string | number) => download(`/orders/${orderId}/invoice`),
   },
 
   returns: {
@@ -258,11 +273,13 @@ export const api = {
         body: JSON.stringify(data),
       }),
     shipments: () => request<AdminShipment[]>('/admin/shipments'),
-    createShipment: (data: { order: number; provider: string; awb_number?: string; tracking_url?: string; status?: AdminShipment['status']; raw_payload?: JsonMap; event_location?: string; event_note?: string }) =>
+    createShipment: (data: { order: number; provider: string; awb_number?: string; tracking_url?: string; label_url?: string; manifest_url?: string; shipping_charge?: number | string; rto_reason?: string; status?: AdminShipment['status']; raw_payload?: JsonMap; event_location?: string; event_note?: string }) =>
       request<AdminShipment>('/admin/shipments', {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+    shipmentLabel: (shipmentId: number) => download(`/admin/shipments/${shipmentId}/label`),
+    shipmentManifest: (shipmentId: number) => download(`/admin/shipments/${shipmentId}/manifest`),
     returns: () => request<ReturnRequest[]>('/admin/returns'),
     updateReturn: (returnId: number, data: { status: ReturnRequest['status'] }) =>
       request<ReturnRequest>(`/admin/returns/${returnId}`, {
@@ -277,6 +294,12 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+    workflowOrder: (orderId: number, data: { action: string; provider?: string; note?: string; location?: string }) =>
+      request<Order>(`/admin/orders/${orderId}/workflow`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    orderInvoice: (orderId: number) => download(`/admin/orders/${orderId}/invoice`),
   },
 
   addresses: {

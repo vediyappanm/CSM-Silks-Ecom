@@ -150,6 +150,44 @@ class CheckoutFlowTests(TestCase):
         wrong_phone = public_client.get(f"/api/orders/track?identifier=AWB-PUBLIC-1&phone=+919999999999")
         self.assertEqual(wrong_phone.status_code, 404)
 
+    def test_admin_workflow_creates_label_and_handles_rto(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="workflow-admin", email="workflow@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        label_resp = self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "create_label", "provider": "manual"},
+            format="json",
+        )
+        self.assertEqual(label_resp.status_code, 200)
+        self.assertEqual(label_resp.json()["status"], Order.Status.PACKED)
+        order = Order.objects.get(id=order_id)
+        self.assertTrue(order.tracking_number.startswith("CSM"))
+        self.assertTrue(order.shipment.label_url)
+
+        rto_resp = self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "rto_initiated", "note": "Customer refused delivery", "location": "Chennai hub"},
+            format="json",
+        )
+        self.assertEqual(rto_resp.status_code, 200)
+        self.assertEqual(rto_resp.json()["status"], Order.Status.RTO_INITIATED)
+        self.assertTrue(ShipmentEvent.objects.filter(order_id=order_id, status=ShipmentEvent.Status.RTO_INITIATED, location="Chennai hub").exists())
+
+        label_download = self.client.get(f"/api/admin/shipments/{order.shipment.id}/label")
+        self.assertEqual(label_download.status_code, 200)
+        self.assertIn(order.order_number, label_download.content.decode())
+
+    def test_customer_can_download_invoice(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        invoice_resp = self.client.get(f"/api/orders/{order_resp.json()['id']}/invoice")
+        self.assertEqual(invoice_resp.status_code, 200)
+        self.assertIn("CSM Silks Tax Invoice", invoice_resp.content.decode())
+
 
 class ProductApiTests(TestCase):
     def test_product_listing_shape_matches_frontend(self):

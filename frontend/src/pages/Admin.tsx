@@ -31,13 +31,24 @@ type ReportData = Record<string, number | string | undefined>;
 type UnsoldRow = { id: number; product_name?: string; sku?: string; stock_qty?: number; days_unsold?: number; capital_blocked?: number | string; severity?: string };
 type UnsoldData = { count: number; items: UnsoldRow[] };
 
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function isAdminUser(user?: User | null) {
   return user?.role === 'admin' || user?.role === 'super_admin';
 }
 
 function adminStatusClass(status?: string) {
   if (status === 'delivered') return 'st-delivered';
-  if (status === 'cancelled' || status === 'refunded' || status === 'returned') return 'st-pending';
+  if (status === 'cancelled' || status === 'refunded' || status === 'returned' || status === 'delivery_failed' || status === 'rto_initiated' || status === 'rto_delivered') return 'st-pending';
   if (status === 'shipped' || status === 'out_for_delivery') return 'st-shipped';
   return 'st-processing';
 }
@@ -185,19 +196,47 @@ function AdminDashboard() {
 
 function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
-  useEffect(() => { api.admin.orders().then(data => setOrders(data.items)).catch(() => setOrders([])); }, []);
-  const updateStatus = async (order: Order, status: string) => {
-    const updated = await api.admin.updateOrderStatus(order.id, { status });
+  const [notice, setNotice] = useState('');
+  const load = () => {
+    api.admin.orders().then(data => setOrders(data.items)).catch(() => setOrders([]));
+  };
+  useEffect(load, []);
+  const runWorkflow = async (order: Order, action: string) => {
+    const updated = await api.admin.workflowOrder(order.id, {
+      action,
+      provider: 'manual',
+      location: 'CSM Kanchipuram operations',
+      note: action === 'delivery_failed' ? 'Delivery attempt failed. Customer follow-up required.' : '',
+    });
     setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+    setNotice(`${updated.order_number} moved to ${updated.status}.`);
+  };
+  const downloadInvoice = async (order: Order) => {
+    const blob = await api.admin.orderInvoice(order.id);
+    saveBlob(blob, `invoice-${order.order_number}.html`);
   };
   return (
-    <div className="chart-card">
-      <AdminOrderTable orders={orders} onStatus={updateStatus} />
+    <div className="admin-stack">
+      {notice && <div className="admin-alert good">{notice}</div>}
+      <div className="chart-card">
+        <AdminOrderTable orders={orders} onWorkflow={runWorkflow} onInvoice={downloadInvoice} />
+      </div>
     </div>
   );
 }
 
-function AdminOrderTable({ orders, onStatus }: { orders: AdminOrderRow[]; onStatus?: (order: Order, status: string) => void }) {
+function AdminOrderTable({ orders, onWorkflow, onInvoice }: { orders: AdminOrderRow[]; onWorkflow?: (order: Order, action: string) => void; onInvoice?: (order: Order) => void }) {
+  const workflowActions = [
+    ['quality_check', 'QC'],
+    ['pack', 'Pack'],
+    ['create_label', 'Label'],
+    ['pickup', 'Pickup'],
+    ['in_transit', 'Transit'],
+    ['out_for_delivery', 'OFD'],
+    ['delivered', 'Done'],
+    ['delivery_failed', 'Fail'],
+    ['rto_initiated', 'RTO'],
+  ];
   return (
     <table className="admin-table">
       <thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
@@ -210,14 +249,13 @@ function AdminOrderTable({ orders, onStatus }: { orders: AdminOrderRow[]; onStat
             <td><span className={`status-badge ${adminStatusClass(o.status)}`}>{o.status}</span></td>
             <td>{o.created_at ? new Date(o.created_at).toLocaleDateString('en-IN') : '-'}</td>
             <td>
-              {onStatus && (
-                <select onChange={e => void onStatus(o as Order, e.target.value)} defaultValue="">
-                  <option value="" disabled>Update</option>
-                  <option value="quality_check">Quality Check</option>
-                  <option value="packed">Packed</option>
-                  <option value="shipped">Shipped</option>
-                  <option value="delivered">Delivered</option>
-                </select>
+              {onWorkflow && (
+                <div className="admin-order-actions">
+                  {workflowActions.map(([action, label]) => (
+                    <button key={action} onClick={() => void onWorkflow(o as Order, action)}>{label}</button>
+                  ))}
+                  {onInvoice && <button onClick={() => void onInvoice(o as Order)}>Invoice</button>}
+                </div>
               )}
             </td>
           </tr>
@@ -331,6 +369,11 @@ function AdminShipments() {
     load();
   };
 
+  const downloadShipmentFile = async (shipment: AdminShipment, kind: 'label' | 'manifest') => {
+    const blob = kind === 'label' ? await api.admin.shipmentLabel(shipment.id) : await api.admin.shipmentManifest(shipment.id);
+    saveBlob(blob, `${kind}-${shipment.order_number}.txt`);
+  };
+
   return (
     <div className="admin-create-grid compact">
       <div className="admin-form-card">
@@ -352,6 +395,8 @@ function AdminShipments() {
               <option value="out_for_delivery">Out for delivery</option>
               <option value="delivered">Delivered</option>
               <option value="failed">Failed</option>
+              <option value="rto_initiated">RTO initiated</option>
+              <option value="rto_delivered">RTO delivered</option>
             </select>
           </label>
           <label className="admin-field">Current location<input value={form.event_location} onChange={e => setForm({ ...form, event_location: e.target.value })} placeholder="Kanchipuram hub" /></label>
@@ -373,6 +418,10 @@ function AdminShipments() {
                 ) : null}
               </div>
               <span className={`status-badge ${shipment.status === 'delivered' ? 'st-delivered' : 'st-shipped'}`}>{shipment.status}</span>
+              <div className="admin-row-actions">
+                <button onClick={() => void downloadShipmentFile(shipment, 'label')}>Label</button>
+                <button onClick={() => void downloadShipmentFile(shipment, 'manifest')}>Manifest</button>
+              </div>
             </div>
           ))}
         </div>

@@ -151,6 +151,28 @@ class AdminOrderStatusSerializer(serializers.Serializer):
     courier_url = serializers.URLField(required=False, allow_blank=True)
 
 
+class AdminOrderWorkflowSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=[
+            "confirm",
+            "quality_check",
+            "pack",
+            "create_label",
+            "pickup",
+            "in_transit",
+            "out_for_delivery",
+            "delivery_failed",
+            "rto_initiated",
+            "rto_delivered",
+            "delivered",
+            "cancel",
+        ]
+    )
+    provider = serializers.CharField(required=False, allow_blank=True, default="manual")
+    note = serializers.CharField(required=False, allow_blank=True, default="")
+    location = serializers.CharField(required=False, allow_blank=True, default="")
+
+
 class ReturnCreateSerializer(serializers.Serializer):
     order_id = serializers.IntegerField()
     reason = serializers.CharField(max_length=120)

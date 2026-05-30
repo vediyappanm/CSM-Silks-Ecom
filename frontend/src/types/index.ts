@@ -170,7 +170,7 @@ export interface TrackingEvent {
 export interface Order {
   id: number;
   order_number: string;
-  status: 'pending' | 'payment_pending' | 'confirmed' | 'quality_check' | 'packed' | 'shipped' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'return_initiated' | 'returned' | 'refunded';
+  status: 'pending' | 'payment_pending' | 'confirmed' | 'quality_check' | 'packed' | 'shipped' | 'out_for_delivery' | 'delivered' | 'delivery_failed' | 'rto_initiated' | 'rto_delivered' | 'cancelled' | 'return_initiated' | 'returned' | 'refunded';
   payment_method?: string;
   payment_status?: string;
   subtotal: number | string;
@@ -211,7 +211,11 @@ export interface AdminShipment {
   provider: string;
   awb_number: string;
   tracking_url: string;
-  status: 'created' | 'picked_up' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed';
+  label_url?: string;
+  manifest_url?: string;
+  shipping_charge?: number | string;
+  rto_reason?: string;
+  status: 'created' | 'picked_up' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'failed' | 'rto_initiated' | 'rto_delivered';
   raw_payload?: Record<string, unknown>;
   events?: TrackingEvent[];
   created_at: string;

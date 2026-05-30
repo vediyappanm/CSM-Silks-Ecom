@@ -11,11 +11,17 @@ class Shipment(models.Model):
         OUT_FOR_DELIVERY = "out_for_delivery", "Out for delivery"
         DELIVERED = "delivered", "Delivered"
         FAILED = "failed", "Failed"
+        RTO_INITIATED = "rto_initiated", "RTO initiated"
+        RTO_DELIVERED = "rto_delivered", "RTO delivered"
 
     order = models.OneToOneField(Order, related_name="shipment", on_delete=models.CASCADE)
     provider = models.CharField(max_length=60, default="manual")
     awb_number = models.CharField(max_length=100, blank=True)
     tracking_url = models.URLField(blank=True)
+    label_url = models.URLField(blank=True)
+    manifest_url = models.URLField(blank=True)
+    shipping_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    rto_reason = models.CharField(max_length=160, blank=True)
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.CREATED)
     raw_payload = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -36,6 +42,8 @@ class ShipmentEvent(models.Model):
         DELIVERED = "delivered", "Delivered"
         DELIVERY_ATTEMPTED = "delivery_attempted", "Delivery attempted"
         DELAYED = "delayed", "Delayed"
+        RTO_INITIATED = "rto_initiated", "RTO initiated"
+        RTO_DELIVERED = "rto_delivered", "RTO delivered"
         CANCELLED = "cancelled", "Cancelled"
         RETURN_REQUESTED = "return_requested", "Return requested"
         RETURNED = "returned", "Returned"
