@@ -64,6 +64,7 @@ export interface Product {
   collections?: CatalogCollection[];
   variants?: ProductVariant[];
   available_qty?: number;
+  is_active?: boolean;
   is_featured?: boolean;
   is_gi_tagged?: boolean;
   assured?: boolean;
@@ -119,21 +120,45 @@ export interface AdminProductQuickCreatePayload {
 export interface CartItem extends Product {
   qty: number;
   cart_item_id?: number;
+  variant_sku?: string;
+  variant_available_qty?: number;
+  variant_stock_qty?: number;
+  variant_reserved_qty?: number;
+  stock_status?: 'ok' | 'inactive' | 'out_of_stock' | 'insufficient';
+  stock_message?: string;
 }
 
 export interface ApiCartItem {
   id: number;
   product_id: number;
   variant_id: number;
+  variant_sku?: string;
   quantity: number;
+  variant_available_qty?: number;
+  variant_stock_qty?: number;
+  variant_reserved_qty?: number;
+  stock_status?: CartItem['stock_status'];
+  stock_message?: string;
   product: Product;
   line_total: number | string;
+}
+
+export interface CartStockIssue {
+  item_id: number;
+  variant_id: number;
+  sku: string;
+  requested_qty: number;
+  available_qty: number;
+  status: 'inactive' | 'out_of_stock' | 'insufficient';
+  message: string;
 }
 
 export interface CartResponse {
   id?: number;
   items: ApiCartItem[];
   item_count: number;
+  has_stock_issues?: boolean;
+  stock_issues?: CartStockIssue[];
   subtotal: number | string;
   discount?: number | string;
   coupon_code?: string;
@@ -222,6 +247,22 @@ export interface AdminShipment {
   updated_at: string;
 }
 
+export interface AdminCoupon {
+  id: number;
+  code: string;
+  description?: string;
+  discount_type: 'flat' | 'percent';
+  value: number | string;
+  min_order_value: number | string;
+  usage_limit?: number | null;
+  used_count: number;
+  starts_at?: string | null;
+  expires_at?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AdminAuditLog {
   id: number;
   user?: number | null;
@@ -293,7 +334,7 @@ export interface TryOnData {
   drape: string;
 }
 
-export type PaymentMethod = 'upi' | 'card' | 'netbank' | 'cod';
+export type PaymentMethod = 'razorpay' | 'cod';
 
 export interface CartTotals {
   subtotal: number;
@@ -342,4 +383,24 @@ export interface ProductReview {
   customer: string;
   is_verified_purchase: boolean;
   created_at: string;
+}
+
+export interface LoyaltyReward {
+  id: number;
+  name: string;
+  description: string;
+  points_required: number;
+  reward_type?: string;
+  reward_value?: number | string;
+  is_active?: boolean;
+}
+
+export interface AppNotification {
+  id: number;
+  title: string;
+  body: string;
+  notification_type?: string;
+  data?: Record<string, unknown>;
+  is_read: boolean;
+  created_at?: string;
 }

@@ -1,55 +1,65 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { useApp } from '@/store/AppContext';
+import { CustomerAuth } from '@/pages/CustomerAuth';
+import type { LoyaltyReward } from '@/types';
 
 export function Account() {
   const { showToast, user, isAuthed, refreshSession, logout } = useApp();
   const navigate = useNavigate();
-  const [phone, setPhone] = useState('+918888888888');
-  const [otp, setOtp] = useState('');
-  const [devOtp, setDevOtp] = useState('');
+  const [rewards, setRewards] = useState<LoyaltyReward[]>([]);
+  const [rewardsLoading, setRewardsLoading] = useState(false);
+  const [redeemingId, setRedeemingId] = useState<number | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ full_name: '', email: '' });
+  const [savingProfile, setSavingProfile] = useState(false);
 
-  const sendOtp = async () => {
-    const res = await api.auth.sendOtp(phone);
-    setDevOtp(res.dev_otp || '');
-    showToast('OK', 'OTP sent', res.dev_otp ? `Dev OTP: ${res.dev_otp}` : 'Check your phone');
+  useEffect(() => {
+    if (!isAuthed) return;
+    void Promise.resolve()
+      .then(() => {
+        setRewardsLoading(true);
+        return api.loyalty.rewards();
+      })
+      .then(setRewards)
+      .catch(() => setRewards([]))
+      .finally(() => setRewardsLoading(false));
+  }, [isAuthed]);
+
+  const saveProfile = async () => {
+    setSavingProfile(true);
+    try {
+      await api.auth.updateMe({
+        full_name: profileForm.full_name.trim(),
+        email: profileForm.email.trim() || undefined,
+      });
+      await refreshSession();
+      setEditingProfile(false);
+      showToast('OK', 'Profile updated', 'Your account details are saved');
+    } catch (err) {
+      showToast('!', 'Profile update failed', err instanceof Error ? err.message : 'Unable to save profile');
+    } finally {
+      setSavingProfile(false);
+    }
   };
 
-  const verifyOtp = async () => {
-    await api.auth.verifyOtp(phone, otp);
-    await refreshSession();
-    showToast('OK', 'Signed in', 'Your CSM Silks account is ready');
+  const redeemReward = async (reward: LoyaltyReward) => {
+    setRedeemingId(reward.id);
+    try {
+      await api.loyalty.redeem(reward.id);
+      await refreshSession();
+      showToast('OK', 'Reward redeemed', `${reward.name} has been added to your account`);
+    } catch (err) {
+      showToast('!', 'Redeem failed', err instanceof Error ? err.message : 'Unable to redeem reward');
+    } finally {
+      setRedeemingId(null);
+    }
   };
 
   if (!isAuthed) {
-    return (
-      <div className="account-page">
-        <div style={{ maxWidth: 460, margin: '0 auto', background: 'white', border: '1px solid var(--dcream)', borderRadius: 14, padding: 24 }}>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: 28, color: 'var(--ink)', marginBottom: 8 }}>Sign in with OTP</h1>
-          <p style={{ color: 'rgba(13,11,8,.55)', fontSize: 13, marginBottom: 18 }}>Use the seeded customer phone or your own number in development.</p>
-          <div className="form-field">
-            <label>Phone</label>
-            <input style={inputStyle} value={phone} onChange={e => setPhone(e.target.value)} />
-          </div>
-          <button className="btn btn-gold" onClick={() => void sendOtp()}>Send OTP</button>
-          {devOtp && <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ink)' }}>Dev OTP: {devOtp}</div>}
-          <div className="form-field" style={{ marginTop: 16 }}>
-            <label>OTP</label>
-            <input style={inputStyle} value={otp} onChange={e => setOtp(e.target.value)} />
-          </div>
-          <button className="btn btn-gold" onClick={() => void verifyOtp()}>Verify and Continue</button>
-        </div>
-      </div>
-    );
+    return <CustomerAuth initialMode="login" />;
   }
-
-  const rewards = [
-    { name: 'Rs 200 Off Coupon', desc: 'Next order discount', pts: '2,000' },
-    { name: 'Free Blouse Stitching', desc: 'Expert tailoring included', pts: '1,500' },
-    { name: 'Studio Photoshoot', desc: '30-min Kanchipuram session', pts: '5,000' },
-    { name: 'Priority Shipping', desc: 'Next-day dispatch', pts: '800' },
-  ];
 
   return (
     <div className="account-page">
@@ -60,6 +70,21 @@ export function Account() {
             <div className="apc-name">{user?.name || user?.full_name || 'CSM Customer'}</div>
             <div className="apc-email">{user?.email || user?.phone}</div>
             <div className="apc-tier">{(user?.loyalty_tier || 'bronze').toUpperCase()} MEMBER</div>
+            <button
+              className="account-edit-btn"
+              type="button"
+              onClick={() => {
+                if (!editingProfile) {
+                  setProfileForm({
+                    full_name: user?.full_name || user?.name || '',
+                    email: user?.email || '',
+                  });
+                }
+                setEditingProfile(value => !value);
+              }}
+            >
+              {editingProfile ? 'Close' : 'Edit profile'}
+            </button>
           </div>
           <div className="account-nav">
             <div className="an-item on"><span className="an-ic">Pts</span>Loyalty & Points</div>
@@ -70,6 +95,25 @@ export function Account() {
         </div>
 
         <div>
+          {editingProfile && (
+            <div className="profile-edit-card">
+              <h2>Edit profile</h2>
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Full name</label>
+                  <input value={profileForm.full_name} onChange={event => setProfileForm(prev => ({ ...prev, full_name: event.target.value }))} placeholder="Your name" />
+                </div>
+                <div className="form-field">
+                  <label>Email</label>
+                  <input value={profileForm.email} onChange={event => setProfileForm(prev => ({ ...prev, email: event.target.value }))} placeholder="you@example.com" type="email" />
+                </div>
+              </div>
+              <button className="btn btn-gold" type="button" onClick={() => void saveProfile()} disabled={savingProfile}>
+                {savingProfile ? 'Saving...' : 'Save profile'}
+              </button>
+            </div>
+          )}
+
           <div className="loyalty-card">
             <div className="lc-tier">{(user?.loyalty_tier || 'bronze').toUpperCase()} MEMBER</div>
             <div className="lc-name">{user?.name || user?.full_name || 'CSM Customer'}</div>
@@ -80,36 +124,37 @@ export function Account() {
           </div>
 
           <h3 style={{ fontFamily: 'var(--display)', fontSize: 22, fontWeight: 700, color: 'var(--ink)', marginBottom: 14 }}>Redeem Rewards</h3>
-          <div className="rewards-grid">
-            {rewards.map((r, i) => (
-              <div key={i} className="reward-card">
-                <div className="rc-icon rc-gold">CSM</div>
-                <div>
-                  <div className="rc-name">{r.name}</div>
-                  <div className="rc-desc">{r.desc}</div>
-                </div>
-                <div className="rc-right">
-                  <div className="rc-pts">{r.pts}</div>
-                  <div className="rc-pts-lbl">points</div>
-                  <a className="rc-btn" onClick={() => showToast('OK', 'Reward Redeemed', `${r.name} applied to your account`)}>Redeem</a>
-                </div>
-              </div>
-            ))}
-          </div>
+          {rewardsLoading ? (
+            <div className="rewards-grid">
+              {Array.from({ length: 4 }).map((_, index) => <div key={index} className="reward-skeleton" />)}
+            </div>
+          ) : rewards.length === 0 ? (
+            <div className="reward-empty">No active rewards are available right now.</div>
+          ) : (
+            <div className="rewards-grid">
+              {rewards.map((r) => {
+                const disabled = (user?.loyalty_points || 0) < r.points_required || redeemingId === r.id;
+                return (
+                  <div key={r.id} className="reward-card">
+                    <div className="rc-icon rc-gold">CSM</div>
+                    <div>
+                      <div className="rc-name">{r.name}</div>
+                      <div className="rc-desc">{r.description}</div>
+                    </div>
+                    <div className="rc-right">
+                      <div className="rc-pts">{Number(r.points_required).toLocaleString('en-IN')}</div>
+                      <div className="rc-pts-lbl">points</div>
+                      <button className="rc-btn" type="button" disabled={disabled} onClick={() => void redeemReward(r)}>
+                        {redeemingId === r.id ? 'Redeeming...' : 'Redeem'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  background: 'var(--ncream)',
-  border: '1px solid var(--dcream)',
-  borderRadius: 8,
-  padding: '10px 12px',
-  fontFamily: 'var(--body)',
-  fontSize: 13,
-  color: 'var(--ink)',
-  outline: 'none',
-};

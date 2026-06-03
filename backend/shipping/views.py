@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import secrets
 
 from django.conf import settings
@@ -56,6 +58,15 @@ def _verify_webhook_secret(request) -> bool:
     expected = settings.SHIPROCKET_WEBHOOK_SECRET
     if not expected:
         return settings.DEBUG
+    provided_hmac = (
+        request.headers.get("X-Shiprocket-Hmac-Sha256")
+        or request.headers.get("X-Hub-Signature-256")
+        or ""
+    )
+    if provided_hmac:
+        signature = str(provided_hmac).replace("sha256=", "", 1)
+        digest = hmac.new(str(expected).encode("utf-8"), request.body, hashlib.sha256).hexdigest()
+        return secrets.compare_digest(digest, signature)
     provided = (
         request.headers.get("X-Shiprocket-Webhook-Secret")
         or request.headers.get("X-Webhook-Secret")

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
+import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
+import { ProductGridSkeleton } from '@/ui/components';
 import type { CatalogFacets, Product } from '@/types';
 
 const CATS = ['all', 'kanjivaram', 'bridal', 'festive', 'patola', 'daily', 'mysore', 'banarasi'] as const;
@@ -21,12 +23,12 @@ export function Womens() {
     window.scrollTo(0, 0);
   }, []);
 
-  useEffect(() => {
-    api.products.facets({ gender: 'women' }).then(setFacets).catch(() => setFacets(null));
+  const loadFacets = useCallback(() => {
+    return api.products.facets({ gender: 'women' }).then(setFacets).catch(() => setFacets(null));
   }, []);
 
-  useEffect(() => {
-    api.products.list({
+  const loadProducts = useCallback(() => {
+    return api.products.list({
       gender: 'women',
       category: filter === 'all' ? undefined : filter,
       sort,
@@ -40,16 +42,35 @@ export function Womens() {
       .finally(() => setLoading(false));
   }, [filter, sort, rating, maxPrice, inStock]);
 
+  useEffect(() => {
+    void loadFacets();
+  }, [loadFacets]);
+
+  useEffect(() => {
+    void loadProducts();
+  }, [loadProducts]);
+
+  const realtimeStatus = useCatalogLiveRefresh({
+    gender: 'women',
+    onUpdate: () => {
+      void loadProducts();
+      void loadFacets();
+    },
+  });
+
   const changeFilter = (nextFilter: string) => {
     setLoading(true);
-    setFilter(nextFilter);
+    setFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
   };
 
   return (
     <div className="catalog-page">
       <header className="catalog-hero women">
         <div>
-          <span>Women's collection</span>
+          <div className="catalog-hero-kicker">
+            <span>Women's collection</span>
+            <small className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</small>
+          </div>
           <h1>Pure silk sarees</h1>
           <p>Handwoven Kanjivaram, bridal, festive, daily, Patola, Mysore, and Banarasi edits with live stock.</p>
         </div>
@@ -62,6 +83,7 @@ export function Womens() {
             {CATS.map(c => (
               <button key={c} className={`filter-chip ${filter === c ? 'active' : ''}`} onClick={() => changeFilter(c)}>
                 {c === 'all' ? 'All sarees' : c.charAt(0).toUpperCase() + c.slice(1)}
+                {filter === c && c !== 'all' && <span className="filter-clear">x</span>}
               </button>
             ))}
           </div>
@@ -82,7 +104,7 @@ export function Womens() {
 
       <section className="section surface-section">
         {loading ? (
-          <div className="loading-state">Loading collection...</div>
+          <ProductGridSkeleton />
         ) : (
           <div className="pg">
             {products.map(product => <ProductCard key={product.id} product={product} />)}

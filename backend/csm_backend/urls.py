@@ -5,6 +5,7 @@ from django.http import JsonResponse
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from accounts.views import AddressDetailView, AddressListCreateView
+from .health import readiness
 
 
 def health(_request):
@@ -21,6 +22,8 @@ urlpatterns = [
     path("admin/django/", admin.site.urls),
     path("health", health),
     path("api/health", health),
+    path("readiness", readiness),
+    path("api/readiness", readiness),
     path("api/schema", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
     path("api/auth/", include("accounts.urls")),

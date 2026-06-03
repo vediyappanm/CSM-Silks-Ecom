@@ -7,20 +7,21 @@ Single-brand textile ecommerce platform for CSM Silks, rebuilt around a Django/D
 ```bash
 python backend/manage.py migrate
 python backend/manage.py seed_csm
-python backend/manage.py runserver 0.0.0.0:8000
+cd backend
+daphne -b 0.0.0.0 -p 8000 csm_backend.asgi:application
 
-cd frontend
+cd ../frontend
 npm install
 npm run dev
 ```
 
-Frontend runs on `http://localhost:5173` and proxies `/api` to Django on `http://localhost:8000`.
+Frontend runs on `http://localhost:5173` and proxies `/api` and `/ws` to the Django ASGI app on `http://localhost:8000`.
 
 ## Core Accounts
 
 - Admin: `admin@csmsilks.com` / `admin123`
 - Customer OTP phone: `+918888888888`
-- In development, `/api/auth/otp/send` returns `dev_otp`.
+- Local OTP fallback is opt-in only: set `DEBUG=True` and `OTP_DEV_FALLBACK_ENABLED=True` if you need `/api/auth/otp/send` to return `dev_otp`. Production login requires live SMS or email OTP delivery.
 
 ## Backend
 
@@ -50,3 +51,7 @@ python backend/manage.py check
 python backend/manage.py test accounts catalog cart orders payments inventory loyalty notifications analytics shipping reviews ai
 cd frontend && npm run build
 ```
+
+For a production deploy check, run with `DEBUG=False`, a long `SECRET_KEY`, real `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, and `CSRF_TRUSTED_ORIGINS`. When `DEBUG=False`, the backend now defaults to HTTPS redirect, secure cookies, HSTS, and forwarded-proto support unless explicitly overridden.
+
+The deploy check also fails fast if production is still wired to SQLite, in-memory realtime, missing Redis/Celery broker settings, missing Razorpay credentials/webhook secret, no live OTP channel, or no customer notification channel. `docker-compose.prod.yml` runs `python backend/manage.py check --deploy` before migrations so a bad production environment stops before serving traffic.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import random
 
 from django.contrib.auth import get_user_model
@@ -14,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .email import OTPEmailDeliveryError, mask_email, otp_email_configured, send_otp_email
 from .models import Address, OTPChallenge
 from .serializers import (
     AddressSerializer,
@@ -25,12 +27,25 @@ from .serializers import (
 from .sms import SMSDeliveryError, send_otp_sms, twilio_configured
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def normalize_phone(phone: str) -> str:
     raw = str(phone or "").strip()
     digits = "".join(char for char in raw if char.isdigit())
-    return f"+{digits}" if raw.startswith("+") and digits else digits
+    if not digits:
+        return ""
+    if raw.startswith("+"):
+        return f"+{digits}"
+    if len(digits) == 10:
+        return f"+91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return f"+{digits}"
+    return digits
+
+
+def normalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
 
 
 def token_payload(user) -> dict:
@@ -51,20 +66,59 @@ class SendOTPView(APIView):
         serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         phone = normalize_phone(serializer.validated_data["phone"])
+        digits = "".join(char for char in phone if char.isdigit())
+        if not phone.startswith("+") or len(digits) < 10 or len(digits) > 15:
+            return Response({"detail": "Enter a valid phone number with country code"}, status=status.HTTP_400_BAD_REQUEST)
+        email = normalize_email(serializer.validated_data.get("email", ""))
+        if email:
+            email_taken = User.objects.filter(email__iexact=email).exclude(phone=phone).exists()
+            if email_taken:
+                return Response({"detail": "Email already belongs to another account"}, status=status.HTTP_400_BAD_REQUEST)
+        existing_user = User.objects.filter(phone=phone).first()
+        email_to = email or normalize_email(getattr(existing_user, "email", ""))
         otp = f"{random.randint(100000, 999999)}"
-        OTPChallenge.objects.create(phone=phone, otp_hash=make_password(otp), expires_at=OTPChallenge.expiry_time())
-        response = {"message": "OTP sent", "sms_sent": False}
+        response = {
+            "message": "OTP sent",
+            "sms_sent": False,
+            "email_sent": False,
+            "email_masked": mask_email(email_to),
+            "delivery_channels": [],
+        }
+        delivery_failures: list[dict[str, str]] = []
         if twilio_configured():
             try:
-                sms_result = send_otp_sms(phone=phone, otp=otp)
+                send_otp_sms(phone=phone, otp=otp)
                 response["sms_sent"] = True
-                response["sms_id"] = sms_result.get("sid", "")
+                response["delivery_channels"].append("sms")
             except SMSDeliveryError as exc:
-                if not settings.DEBUG:
-                    return Response({"detail": "Unable to send OTP right now"}, status=status.HTTP_502_BAD_GATEWAY)
-                response["sms_error"] = str(exc)
-        if settings.DEBUG:
+                delivery_failures.append({"channel": "sms", "provider": "twilio", "error": str(exc)})
+                logger.warning("OTP SMS delivery failed for %s via Twilio: %s", phone, exc)
+        if email_to and otp_email_configured():
+            try:
+                send_otp_email(to_email=email_to, otp=otp)
+                response["email_sent"] = True
+                response["delivery_channels"].append("email")
+            except OTPEmailDeliveryError as exc:
+                delivery_failures.append({"channel": "email", "provider": "resend", "error": str(exc)})
+                logger.warning("OTP email delivery failed for %s via Resend: %s", mask_email(email_to), exc)
+
+        if not response["delivery_channels"] and settings.DEBUG and settings.OTP_DEV_FALLBACK_ENABLED:
             response["dev_otp"] = otp
+            response["delivery_channels"].append("development")
+
+        if not response["delivery_channels"]:
+            if twilio_configured() or (email_to and otp_email_configured()):
+                detail = "Unable to send OTP by live SMS or email. Check the phone/email and delivery provider configuration."
+                code = status.HTTP_502_BAD_GATEWAY
+            else:
+                detail = "OTP delivery is not configured. Enable SMS or email OTP before customer login."
+                code = status.HTTP_503_SERVICE_UNAVAILABLE
+            payload = {"detail": detail}
+            if settings.DEBUG and delivery_failures:
+                payload["delivery_failures"] = delivery_failures
+            return Response(payload, status=code)
+
+        OTPChallenge.objects.create(phone=phone, otp_hash=make_password(otp), expires_at=OTPChallenge.expiry_time())
         return Response(response)
 
 
@@ -85,7 +139,12 @@ class VerifyOTPView(APIView):
         challenge.save(update_fields=["attempts"])
         if challenge.attempts > 5 or not check_password(otp, challenge.otp_hash):
             return Response({"detail": "Invalid or expired OTP"}, status=status.HTTP_400_BAD_REQUEST)
-        challenge.mark_consumed()
+        full_name = serializer.validated_data.get("full_name", "").strip()
+        email = serializer.validated_data.get("email", "").strip().lower()
+        if email:
+            email_taken = User.objects.filter(email__iexact=email).exclude(phone=phone).exists()
+            if email_taken:
+                return Response({"detail": "Email already belongs to another account"}, status=status.HTTP_400_BAD_REQUEST)
         user, created = User.objects.get_or_create(
             phone=phone,
             defaults={"username": phone, "is_verified": True, "role": User.Role.CUSTOMER},
@@ -93,8 +152,20 @@ class VerifyOTPView(APIView):
         if created is False and not user.is_verified:
             user.is_verified = True
             user.save(update_fields=["is_verified"])
+        update_fields = ["last_login"]
+        if full_name:
+            user.full_name = full_name
+            update_fields.append("full_name")
+        if email:
+            user.email = email
+            update_fields.append("email")
+        for preference in ["wa_opted_in", "push_opted_in"]:
+            if preference in serializer.validated_data:
+                setattr(user, preference, serializer.validated_data[preference])
+                update_fields.append(preference)
+        challenge.mark_consumed()
         user.last_login = timezone.now()
-        user.save(update_fields=["last_login"])
+        user.save(update_fields=list(dict.fromkeys(update_fields)))
         return Response(token_payload(user))
 
 

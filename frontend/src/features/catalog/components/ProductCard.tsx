@@ -15,6 +15,7 @@ export function ProductCard({ product }: ProductCardProps) {
   const rating = Number(product.avg_rating || 0);
   const discount = product.mrp ? Math.max(0, Math.round((1 - product.price / product.mrp) * 100)) : 0;
   const stock = Number(product.available_qty || 0);
+  const canBuy = stock > 0;
 
   const openProduct = () => {
     navigate(`/product/${product.gender === 'men' ? 'mens' : 'womens'}/${product.slug}`);
@@ -60,12 +61,14 @@ export function ProductCard({ product }: ProductCardProps) {
           <button
             className="product-cart"
             aria-label="Add to cart"
+            disabled={!canBuy}
             onClick={(event) => {
               event.stopPropagation();
+              if (!canBuy) return;
               void addToCart(product);
             }}
           >
-            <ShoppingBag size={16} /> Add
+            <ShoppingBag size={16} /> {canBuy ? 'Add' : 'Sold out'}
           </button>
         </div>
       </div>

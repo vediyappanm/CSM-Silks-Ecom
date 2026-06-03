@@ -7,6 +7,31 @@ from accounts.models import Address
 from catalog.models import Product, ProductVariant
 
 
+class Coupon(models.Model):
+    class DiscountType(models.TextChoices):
+        FLAT = "flat", "Flat amount"
+        PERCENT = "percent", "Percentage"
+
+    code = models.CharField(max_length=30, unique=True, db_index=True)
+    description = models.CharField(max_length=180, blank=True)
+    discount_type = models.CharField(max_length=20, choices=DiscountType.choices)
+    value = models.DecimalField(max_digits=12, decimal_places=2)
+    min_order_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    usage_limit = models.PositiveIntegerField(null=True, blank=True)
+    used_count = models.PositiveIntegerField(default=0)
+    starts_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self) -> str:
+        return self.code
+
+
 class Order(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"

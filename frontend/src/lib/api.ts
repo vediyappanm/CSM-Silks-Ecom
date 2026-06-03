@@ -1,6 +1,7 @@
 import type {
   Address,
   AdminAuditLog,
+  AdminCoupon,
   AdminProductQuickCreatePayload,
   AdminInventoryRow,
   AdminShipment,
@@ -9,6 +10,8 @@ import type {
   CatalogCollection,
   CatalogFacets,
   DeliveryCheck,
+  AppNotification,
+  LoyaltyReward,
   Order,
   PaginatedResponse,
   Product,
@@ -27,9 +30,28 @@ type PaymentVerifyPayload = { razorpay_order_id: string; razorpay_payment_id: st
 type AdminDashboardResponse = { kpis: JsonMap; recent_orders: JsonMap[] };
 type UnsoldResponse = { count: number; total_capital_blocked: number | string; items: JsonMap[] };
 type WishlistApiItem = { id: number; product: Product; created_at: string };
+type NotificationListResponse = PaginatedResponse<AppNotification> & { unread_count: number };
+type OTPDeliveryResponse = {
+  message: string;
+  sms_sent?: boolean;
+  email_sent?: boolean;
+  email_masked?: string;
+  delivery_channels?: string[];
+};
+type CustomerSignupProfile = {
+  full_name?: string;
+  email?: string;
+  wa_opted_in?: boolean;
+  push_opted_in?: boolean;
+};
+type QueryParams = Record<string, string | number | boolean | undefined>;
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_KEY);
+}
+
+export function getRefreshToken() {
+  return localStorage.getItem(REFRESH_KEY);
 }
 
 export function setTokens(access?: string, refresh?: string) {
@@ -40,6 +62,67 @@ export function setTokens(access?: string, refresh?: string) {
 export function clearTokens() {
   localStorage.removeItem(ACCESS_KEY);
   localStorage.removeItem(REFRESH_KEY);
+}
+
+type RefreshSessionResponse = { access_token?: string; refresh_token?: string; user?: User };
+
+function decodeJwtPayload(token: string): { exp?: number } | null {
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+  try {
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), '=');
+    return JSON.parse(window.atob(padded)) as { exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+function isJwtExpired(token: string | null | undefined, skewSeconds = 30) {
+  if (!token) return true;
+  const payload = decodeJwtPayload(token);
+  if (!payload?.exp) return true;
+  return payload.exp * 1000 <= Date.now() + skewSeconds * 1000;
+}
+
+function hasStoredSession() {
+  return Boolean(getAccessToken() || getRefreshToken());
+}
+
+async function refreshSession(): Promise<RefreshSessionResponse | null> {
+  const refresh = getRefreshToken();
+  if (!refresh || isJwtExpired(refresh)) {
+    clearTokens();
+    return null;
+  }
+  const res = await fetch(`${API_BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh }),
+  });
+  if (!res.ok) {
+    clearTokens();
+    return null;
+  }
+  const data = await res.json() as RefreshSessionResponse;
+  setTokens(data.access_token, data.refresh_token);
+  return data;
+}
+
+async function refreshAccessToken() {
+  const data = await refreshSession();
+  return Boolean(data?.access_token);
+}
+
+async function ensureFreshAccessToken() {
+  const access = getAccessToken();
+  if (access && !isJwtExpired(access)) return true;
+  const refresh = getRefreshToken();
+  if (!refresh || isJwtExpired(refresh)) {
+    clearTokens();
+    return false;
+  }
+  return refreshAccessToken();
 }
 
 function normalizeProduct(product: Product): Product {
@@ -56,8 +139,12 @@ function normalizeProduct(product: Product): Product {
   };
 }
 
-async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const token = getAccessToken();
+async function request<T>(endpoint: string, options?: RequestInit, retryOnUnauthorized = true): Promise<T> {
+  let token = getAccessToken();
+  if (token && !endpoint.startsWith('/auth/refresh')) {
+    const ready = await ensureFreshAccessToken();
+    token = ready ? getAccessToken() : null;
+  }
   const isFormData = options?.body instanceof FormData;
   const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
@@ -67,6 +154,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     },
     ...options,
   });
+  if (res.status === 401 && retryOnUnauthorized && !endpoint.startsWith('/auth/refresh')) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return request<T>(endpoint, options, false);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || err.message || `API error: ${res.status}`);
@@ -75,13 +166,21 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-async function download(endpoint: string): Promise<Blob> {
-  const token = getAccessToken();
+async function download(endpoint: string, retryOnUnauthorized = true): Promise<Blob> {
+  let token = getAccessToken();
+  if (token) {
+    const ready = await ensureFreshAccessToken();
+    token = ready ? getAccessToken() : null;
+  }
   const res = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });
+  if (res.status === 401 && retryOnUnauthorized) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return download(endpoint, false);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || err.message || `API error: ${res.status}`);
@@ -89,8 +188,13 @@ async function download(endpoint: string): Promise<Blob> {
   return res.blob();
 }
 
+function queryString(params?: QueryParams) {
+  const entries = Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== '');
+  return entries.length ? '?' + new URLSearchParams(entries.map(([key, value]) => [key, String(value)])).toString() : '';
+}
+
 export const api = {
-  tokens: { getAccessToken, setTokens, clearTokens },
+  tokens: { getAccessToken, getRefreshToken, setTokens, clearTokens, refreshAccessToken, ensureFreshAccessToken, hasStoredSession },
 
   products: {
     list: async (params?: Record<string, string | number | boolean | undefined>) => {
@@ -126,14 +230,14 @@ export const api = {
   },
 
   auth: {
-    sendOtp: (phone: string) => request<{ message: string; dev_otp?: string }>('/auth/otp/send', {
+    sendOtp: (phone: string, email?: string) => request<OTPDeliveryResponse>('/auth/otp/send', {
       method: 'POST',
-      body: JSON.stringify({ phone }),
+      body: JSON.stringify({ phone, ...(email ? { email } : {}) }),
     }),
-    verifyOtp: async (phone: string, otp: string) => {
+    verifyOtp: async (phone: string, otp: string, profile?: CustomerSignupProfile) => {
       const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/otp/verify', {
         method: 'POST',
-        body: JSON.stringify({ phone, otp }),
+        body: JSON.stringify({ phone, otp, ...(profile || {}) }),
       });
       setTokens(data.access_token, data.refresh_token);
       return data;
@@ -152,13 +256,9 @@ export const api = {
       body: JSON.stringify(data),
     }),
     refresh: async () => {
-      const refresh = localStorage.getItem(REFRESH_KEY);
-      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/refresh', {
-        method: 'POST',
-        body: JSON.stringify({ refresh }),
-      });
-      setTokens(data.access_token, data.refresh_token);
-      return data;
+      const data = await refreshSession();
+      if (!data?.access_token || !data.refresh_token || !data.user) throw new Error('Session refresh failed');
+      return data as { access_token: string; refresh_token: string; user: User };
     },
     logout: () => {
       clearTokens();
@@ -190,7 +290,10 @@ export const api = {
   },
 
   orders: {
-    list: () => request<PaginatedResponse<Order>>('/orders'),
+    list: (params?: QueryParams) => {
+      const qs = queryString(params);
+      return request<PaginatedResponse<Order>>(`/orders${qs}`);
+    },
     get: (orderId: string | number) => request<Order>(`/orders/${orderId}`),
     track: (identifier: string, phone: string) =>
       request<Order>(`/orders/track?identifier=${encodeURIComponent(identifier)}&phone=${encodeURIComponent(phone)}`),
@@ -266,7 +369,10 @@ export const api = {
         body,
       });
     },
-    orders: () => request<{ items: Order[]; total: number }>('/admin/orders'),
+    orders: (params?: QueryParams) => {
+      const qs = queryString(params);
+      return request<PaginatedResponse<Order>>(`/admin/orders${qs}`);
+    },
     inventory: () => request<AdminInventoryRow[]>('/admin/inventory'),
     adjustInventory: (data: { variant_id: number; quantity_delta: number; note?: string }) =>
       request<JsonMap>('/admin/inventory', {
@@ -289,8 +395,23 @@ export const api = {
       }),
     customers: () => request<JsonMap[]>('/admin/customers'),
     reports: () => request<JsonMap>('/admin/reports'),
-    auditLogs: () => request<AdminAuditLog[]>('/admin/audit-logs'),
+    auditLogs: (params?: { action?: string; entity_type?: string; q?: string }) => {
+      const entries = Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== '');
+      const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
+      return request<AdminAuditLog[]>(`/admin/audit-logs${qs}`);
+    },
     unsold: () => request<UnsoldResponse>('/admin/unsold-alerts'),
+    coupons: () => request<AdminCoupon[]>('/admin/coupons'),
+    createCoupon: (data: Partial<AdminCoupon>) =>
+      request<AdminCoupon>('/admin/coupons', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    updateCoupon: (couponId: number, data: Partial<AdminCoupon>) =>
+      request<AdminCoupon>(`/admin/coupons/${couponId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
     updateOrderStatus: (orderId: number, data: JsonMap) =>
       request<Order>(`/admin/orders/${orderId}/status`, {
         method: 'PATCH',
@@ -320,17 +441,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ product_id }),
       }),
+    remove: (slug: string) => request<void>(`/wishlist/${slug}`, { method: 'DELETE' }),
   },
 
   loyalty: {
     balance: () => request<JsonMap>('/loyalty/balance'),
     history: () => request<JsonMap[]>('/loyalty/history'),
-    rewards: () => request<JsonMap[]>('/loyalty/rewards'),
+    rewards: () => request<LoyaltyReward[]>('/loyalty/rewards'),
     redeem: (rewardId: number) => request<JsonMap>(`/loyalty/redeem/${rewardId}`, { method: 'POST' }),
   },
 
   notifications: {
-    list: () => request<JsonMap[]>('/notifications'),
+    list: (params?: QueryParams) => {
+      const qs = queryString(params);
+      return request<NotificationListResponse>(`/notifications${qs}`);
+    },
+    count: () => request<{ unread_count: number }>('/notifications/count'),
     markRead: () => request<JsonMap>('/notifications', { method: 'PATCH' }),
   },
 };

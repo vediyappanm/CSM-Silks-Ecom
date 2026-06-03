@@ -1,44 +1,72 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
 :root {
-  --ink: #17130f;
-  --ink-2: #221b16;
-  --ink-3: #30251d;
-  --page: #f7f3eb;
-  --surface: #fffdf8;
-  --surface-2: #efe7db;
-  --line: #dfd3c2;
-  --muted: #766a5c;
-  --soft: #a09382;
-  --gold: #b9842e;
-  --gold-2: #e2b75d;
-  --ruby: #842033;
-  --ruby-2: #b43a4d;
-  --green: #0c604f;
-  --green-2: #17836b;
-  --indigo: #263757;
-  --blue: #2f5f9f;
-  --danger: #bd2d36;
-  --success: #0f7a53;
-  --admin-bg: #f4f6fb;
+  /* Core Palette */
+  --ink: #14100d;
+  --ink-2: #1e1814;
+  --ink-3: #2c221b;
+  --page: #f9f6f0;
+  --surface: #ffffff;
+  --surface-2: #f2e9dc;
+  --line: #e3d7c5;
+  --muted: #827565;
+  --soft: #a89a88;
+
+  /* Brand Luxury Accents */
+  --gold: #b37e28;
+  --gold-2: #dfaf53;
+  --ruby: #7a1b2d;
+  --ruby-2: #a62a3f;
+  --green: #0a5243;
+  --green-2: #14735f;
+  --indigo: #1d2c47;
+  --blue: #27528a;
+
+  /* Operational States */
+  --danger: #cb2e37;
+  --success: #0b6c48;
+  --warning: #cc7a00;
+
+  /* Admin Console Styling */
+  --admin-bg: #f5f7fa;
   --admin-panel: #ffffff;
   --admin-panel-2: #f8fafc;
   --admin-line: #e2e8f0;
-  --admin-text: #172033;
+  --admin-text: #0f172a;
   --admin-muted: #64748b;
-  --radius: 8px;
-  --shadow: 0 18px 44px rgba(43, 27, 10, .12);
-  --font-body: 'DM Sans', system-ui, sans-serif;
+
+  /* Modern Design Elements */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 18px;
+
+  /* Dynamic Elevation & Shadows */
+  --shadow-sm: 0 2px 8px rgba(20, 16, 13, 0.04);
+  --shadow: 0 12px 34px rgba(20, 16, 13, 0.06);
+  --shadow-lg: 0 20px 48px rgba(20, 16, 13, 0.1);
+  --focus-shadow: 0 0 0 4px rgba(179, 126, 40, 0.15);
+  --danger-focus: 0 0 0 4px rgba(203, 46, 55, 0.15);
+
+  /* Standard transition speeds */
+  --transition: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Typography Configuration */
+  --font-body: 'DM Sans', 'Outfit', system-ui, sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
 
+  /* Navigation Background (changes in dark mode) */
+  --nav-bg: rgba(249, 246, 240, 0.85);
+
+  /* Legacy Compatibility Variables */
   --cream: var(--surface);
   --ncream: var(--surface-2);
   --dcream: var(--line);
   --crimson: var(--ruby);
   --gold2: var(--gold-2);
   --grn: var(--green);
-  --gd: rgba(185, 132, 46, .12);
-  --gb: rgba(185, 132, 46, .28);
+  --gd: rgba(179, 126, 40, 0.08);
+  --gb: rgba(179, 126, 40, 0.2);
   --muted-old: var(--muted);
   --display: var(--font-display);
   --body: var(--font-body);
@@ -51,7 +79,65 @@
   --border: var(--admin-line);
   --text: var(--admin-text);
   --text2: var(--admin-muted);
-  --text3: rgba(247, 243, 235, .4);
-  --red: #d92d20;
-  --orange: #b54708;
+  --text3: rgba(249, 246, 240, 0.4);
+  --red: var(--danger);
+  --orange: #c45006;
+}
+
+/* ============================================================
+   DARK MODE TOKEN OVERRIDES
+   Applied when <html data-theme="dark">
+   ============================================================ */
+[data-theme="dark"] {
+  /* Core Palette - Deep midnight luxury */
+  --ink: #f0e8da;
+  --ink-2: #e8ddd0;
+  --ink-3: #d4c9ba;
+  --page: #0f0d0b;
+  --surface: #1a1714;
+  --surface-2: #241f1a;
+  --line: #332b24;
+  --muted: #9b8b7a;
+  --soft: #7a6b5a;
+
+  /* Brand accents stay vivid but slightly softened */
+  --gold: #d4a044;
+  --gold-2: #e8c06a;
+  --ruby: #c43050;
+  --ruby-2: #d94560;
+  --green: #12785c;
+  --green-2: #1a9e7a;
+
+  /* Operational states for dark backgrounds */
+  --danger: #e8454e;
+  --success: #16a871;
+  --warning: #e59200;
+
+  /* Admin console tokens */
+  --admin-bg: #111318;
+  --admin-panel: #1a1d24;
+  --admin-panel-2: #1f2330;
+  --admin-line: #2a303d;
+  --admin-text: #e2e8f0;
+  --admin-muted: #94a3b8;
+
+  /* Elevation for dark surfaces */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow: 0 12px 34px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.55);
+  --focus-shadow: 0 0 0 4px rgba(212, 160, 68, 0.25);
+
+  /* Navigation Background */
+  --nav-bg: rgba(15, 13, 11, 0.88);
+
+  /* Legacy aliases auto-update */
+  --bg: var(--admin-bg);
+  --bg2: var(--admin-panel);
+  --bg3: var(--admin-panel-2);
+  --border: var(--admin-line);
+  --text: var(--admin-text);
+  --text2: var(--admin-muted);
+  --text3: rgba(15, 13, 11, 0.5);
+  --gd: rgba(212, 160, 68, 0.1);
+  --gb: rgba(212, 160, 68, 0.25);
 }

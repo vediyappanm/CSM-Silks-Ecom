@@ -1,41 +1,200 @@
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, Bell, CheckCheck, Gift, MessageCircle, PackageCheck, ShoppingBag, Truck } from 'lucide-react';
+import { api } from '@/lib/api';
+import { connectNotificationRealtime, type RealtimeStatus } from '@/lib/realtime';
+import { useApp } from '@/store/AppContext';
+import type { AppNotification, PaginatedResponse } from '@/types';
+
+const NOTIFICATION_PAGE_SIZE = 20;
+type NotificationPageInfo = Pick<PaginatedResponse<AppNotification>, 'total' | 'page' | 'per_page'> & { pages: number };
+const emptyPageInfo: NotificationPageInfo = { total: 0, page: 1, per_page: NOTIFICATION_PAGE_SIZE, pages: 1 };
+
+const iconByType = {
+  order: PackageCheck,
+  shipment: Truck,
+  loyalty: Gift,
+  marketing: ShoppingBag,
+  support: MessageCircle,
+  default: Bell,
+};
+
+function relativeTime(value?: string) {
+  if (!value) return '';
+  const diff = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(diff)) return '';
+  const minutes = Math.max(1, Math.round(diff / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
 
 export function Notifications() {
   const navigate = useNavigate();
+  const { isAuthed, refreshNotifications, showToast } = useApp();
+  const [items, setItems] = useState<AppNotification[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [marking, setMarking] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [pageInfo, setPageInfo] = useState<NotificationPageInfo>(emptyPageInfo);
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('unavailable');
 
-  const notifs = [
-    { icon: '🚚', bg: 'rgba(26,74,138,.1)', title: 'Your saree is on the way!', desc: 'Royal Kanjivaram Gold Zari · ETA Tomorrow by 7 PM', time: '2 hours ago' },
-    { icon: '🏅', bg: 'rgba(196,146,58,.1)', title: 'You earned 650 loyalty points!', desc: 'Balance: 4,820 pts ≈ ₹482 discount value', time: '5 hours ago' },
-    { icon: '🎉', bg: 'rgba(122,30,30,.1)', title: 'Flash Sale — 10% off 8 sarees!', desc: 'Tussar Natural Gold now ₹3,869. Ends in 24 hours!', time: '6 hours ago' },
-    { icon: '✅', bg: 'rgba(26,122,74,.1)', title: 'Order #CSM-2831 Delivered!', desc: 'Champagne Bridal Kanjivaram. Rate your experience →', time: '2 days ago' },
-    { icon: '💬', bg: 'rgba(37,211,102,.1)', title: 'New collection just dropped ✦', desc: '12 new Kanjivaram sarees added. Early access for Platinum members!', time: '3 days ago' },
-    { icon: '👔', bg: 'rgba(196,146,58,.1)', title: "Men's Silk Collection is live!", desc: 'Pure silk dhotis, veshtis and shirts — shop the new collection', time: '5 days ago' },
-  ];
+  const loadNotificationPage = useCallback(async (page = 1, append = false, withSpinner = false) => {
+    if (!isAuthed) {
+      setItems([]);
+      setPageInfo(emptyPageInfo);
+      setUnreadCount(0);
+      setLoading(false);
+      return;
+    }
+    if (append) setLoadingMore(true);
+    else if (withSpinner) setLoading(true);
+    try {
+      const data = await api.notifications.list({ page, per_page: NOTIFICATION_PAGE_SIZE });
+      setItems(prev => {
+        if (!append) return data.items;
+        const seen = new Set(prev.map(item => item.id));
+        return [...prev, ...data.items.filter(item => !seen.has(item.id))];
+      });
+      setPageInfo({ total: data.total, page: data.page, per_page: data.per_page, pages: data.pages || 1 });
+      setUnreadCount(Number(data.unread_count || 0));
+    } catch {
+      if (!append) {
+        setItems([]);
+        setPageInfo(emptyPageInfo);
+        setUnreadCount(0);
+      }
+    } finally {
+      if (append) setLoadingMore(false);
+      else if (withSpinner) setLoading(false);
+    }
+  }, [isAuthed]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadNotificationPage(1, false, true));
+  }, [loadNotificationPage]);
+
+  useEffect(() => {
+    if (!isAuthed) {
+      return undefined;
+    }
+    return connectNotificationRealtime({
+      onStatus: setRealtimeStatus,
+      onMessage: message => {
+        if (message.type === 'notification.created' && message.notification) {
+          setItems(prev => {
+            const exists = prev.some(item => item.id === message.notification?.id);
+            return exists
+              ? prev.map(item => item.id === message.notification?.id ? message.notification as AppNotification : item)
+              : [message.notification as AppNotification, ...prev];
+          });
+          if (typeof message.unread_count === 'number') setUnreadCount(message.unread_count);
+        }
+        if (message.type === 'notifications.read') {
+          setItems(prev => prev.map(item => ({ ...item, is_read: true })));
+          setUnreadCount(0);
+        }
+      },
+    });
+  }, [isAuthed]);
+
+  const markAllRead = async () => {
+    setMarking(true);
+    try {
+      await api.notifications.markRead();
+      setItems(prev => prev.map(item => ({ ...item, is_read: true })));
+      setUnreadCount(0);
+      await refreshNotifications();
+      showToast('OK', 'Notifications updated', 'All notifications are marked as read');
+    } catch (err) {
+      showToast('!', 'Unable to update', err instanceof Error ? err.message : 'Try again later');
+    } finally {
+      setMarking(false);
+    }
+  };
+
+  if (!isAuthed) {
+    return (
+      <div className="notifications-page">
+        <div className="notifications-shell">
+          <button className="back-btn notif-back" onClick={() => navigate('/')} aria-label="Back home"><ArrowLeft size={19} /></button>
+          <div className="notif-empty">
+            <Bell size={48} />
+            <h1>Sign in for notifications</h1>
+            <p>Order updates, delivery alerts, reward messages, and support notes appear here.</p>
+            <button className="btn btn-gold" onClick={() => navigate('/account')}>Sign in</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ background: 'var(--cream)', minHeight: '100vh', padding: '28px 4vw' }}>
-      <div style={{ maxWidth: 700, margin: '0 auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-          <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--ink)' }}>←</button>
-          <h1 style={{ fontFamily: 'var(--display)', fontSize: 28, fontWeight: 800, color: 'var(--ink)' }}>Notifications 🔔</h1>
+    <div className="notifications-page">
+      <div className="notifications-shell">
+        <div className="notifications-head">
+          <button className="back-btn" onClick={() => navigate('/')} aria-label="Back home">
+            <ArrowLeft size={19} />
+            <span className="back-btn-label">Home</span>
+          </button>
+          <div>
+            <span>Account updates</span>
+            <h1>Notifications</h1>
+            <small className={`notif-live-chip ${realtimeStatus}`}>
+              {realtimeStatus === 'connected' ? 'Live updates connected' : realtimeStatus}
+              {pageInfo.total > 0 ? ` • ${items.length} of ${pageInfo.total} loaded` : ''}
+              {unreadCount > 0 ? ` • ${unreadCount} unread` : ''}
+            </small>
+          </div>
+          <button className="notif-mark-btn" onClick={() => void markAllRead()} disabled={marking || items.every(item => item.is_read)}>
+            <CheckCheck size={17} />
+            {marking ? 'Updating...' : 'Mark all read'}
+          </button>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {notifs.map((n, i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, background: 'white', border: '1px solid var(--dcream)', borderRadius: 14, padding: 16 }}>
-              <div style={{
-                width: 42, height: 42, borderRadius: 12, background: n.bg,
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0
-              }}>
-                {n.icon}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 3 }}>{n.title}</div>
-                <div style={{ fontSize: 12, color: 'rgba(13,11,8,.45)', marginBottom: 4 }}>{n.desc}</div>
-                <div style={{ fontSize: 10, color: 'rgba(13,11,8,.28)', fontFamily: 'var(--mono)' }}>{n.time}</div>
-              </div>
+
+        {loading ? (
+          <div className="notifications-list">
+            {Array.from({ length: 5 }).map((_, index) => <div key={index} className="notif-skeleton" />)}
+          </div>
+        ) : items.length === 0 ? (
+          <div className="notif-empty">
+            <Bell size={48} />
+            <h2>No notifications yet</h2>
+            <p>Your order, delivery, return, and reward alerts will appear here.</p>
+            <button className="btn btn-primary" onClick={() => navigate('/womens')}>Start shopping</button>
+          </div>
+        ) : (
+          <>
+            <div className="notifications-list">
+              {items.map((item) => {
+                const Icon = iconByType[(item.notification_type || 'default') as keyof typeof iconByType] || iconByType.default;
+                return (
+                  <article key={item.id} className={`notif-item ${item.is_read ? '' : 'unread'}`}>
+                    <div className="notif-icon"><Icon size={20} /></div>
+                    <div className="notif-copy">
+                      <div className="notif-title-row">
+                        <h2>{item.title}</h2>
+                        {!item.is_read && <span>New</span>}
+                      </div>
+                      <p>{item.body}</p>
+                      <time>{relativeTime(item.created_at)}</time>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
-          ))}
-        </div>
+            {pageInfo.page < pageInfo.pages && (
+              <div className="notifications-load-more">
+                <button className="btn btn-outline" disabled={loadingMore} onClick={() => void loadNotificationPage(pageInfo.page + 1, true)}>
+                  {loadingMore ? 'Loading updates...' : `Load more (${items.length}/${pageInfo.total})`}
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

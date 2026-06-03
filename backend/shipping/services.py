@@ -87,7 +87,7 @@ def record_tracking_event(
     happened_at=None,
 ) -> ShipmentEvent:
     default_title, default_description = EVENT_COPY.get(status, (status.replace("_", " ").title(), "Order tracking updated."))
-    return ShipmentEvent.objects.create(
+    event = ShipmentEvent.objects.create(
         order=order,
         shipment=shipment,
         status=status,
@@ -97,6 +97,10 @@ def record_tracking_event(
         happened_at=happened_at or timezone.now(),
         raw_payload=raw_payload or {},
     )
+    from orders.realtime import publish_order_update
+
+    publish_order_update(order, event=event, source="tracking_event")
+    return event
 
 
 def record_order_status_event(order: Order, *, status: str | None = None, note: str = "", location: str = "") -> ShipmentEvent:
@@ -174,7 +178,7 @@ def create_manual_label(order: Order, *, provider: str = "manual", shipping_char
         defaults={
             "provider": provider or "manual",
             "awb_number": awb_number,
-            "tracking_url": f"https://track.csmsilks.local/{awb_number}",
+            "tracking_url": "",
             "status": Shipment.Status.CREATED,
             "shipping_charge": shipping_charge or 0,
             "raw_payload": {"source": "manual_label", "provider": provider or "manual", **(raw_payload or {})},
@@ -191,12 +195,7 @@ def create_shipping_label(order: Order, *, provider: str = "", shipping_charge=0
     requested_provider = (provider or settings.DEFAULT_COURIER_PROVIDER or "manual").strip().lower()
     if requested_provider == "shiprocket":
         if not shiprocket_configured():
-            return create_manual_label(
-                order,
-                provider="manual",
-                shipping_charge=shipping_charge,
-                raw_payload={"requested_provider": "shiprocket", "fallback_reason": "Shiprocket credentials are not configured"},
-            )
+            raise ShiprocketError("Shiprocket credentials are not configured")
         try:
             data = ShiprocketClient().create_order(order)
             awb_number = data.get("awb_number") or f"SR{timezone.now():%Y%m%d}{str(uuid.uuid4().int)[:8]}"
@@ -221,12 +220,7 @@ def create_shipping_label(order: Order, *, provider: str = "", shipping_charge=0
             apply_shipment_update(shipment, event_note="Shiprocket label created and package is ready for handover.")
             return shipment
         except ShiprocketError as exc:
-            return create_manual_label(
-                order,
-                provider="manual",
-                shipping_charge=shipping_charge,
-                raw_payload={"requested_provider": "shiprocket", "fallback_reason": str(exc)},
-            )
+            raise ShiprocketError(f"Shiprocket label creation failed: {exc}") from exc
     return create_manual_label(order, provider=requested_provider or "manual", shipping_charge=shipping_charge)
 
 

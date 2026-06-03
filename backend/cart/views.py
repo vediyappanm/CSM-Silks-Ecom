@@ -43,7 +43,10 @@ class CartView(APIView):
             defaults={"product": variant.product, "quantity": quantity},
         )
         if not created:
-            item.quantity = min(item.quantity + quantity, 10)
+            next_quantity = min(item.quantity + quantity, 10)
+            if variant.available_qty < next_quantity:
+                return Response({"detail": f"Only {variant.available_qty} units available"}, status=status.HTTP_400_BAD_REQUEST)
+            item.quantity = next_quantity
             item.save(update_fields=["quantity", "updated_at"])
         return Response(CartSerializer(cart).data)
 
@@ -99,3 +102,12 @@ class WishlistView(APIView):
             item.delete()
             return Response({"in_wishlist": False})
         return Response({"in_wishlist": True, "item": WishlistItemSerializer(item).data})
+
+
+class WishlistDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, product_slug: str):
+        product = get_object_or_404(Product, slug=product_slug)
+        WishlistItem.objects.filter(user=request.user, product=product).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

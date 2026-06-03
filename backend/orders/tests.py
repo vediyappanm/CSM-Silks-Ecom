@@ -4,21 +4,32 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Address
 from analytics.models import AdminAuditLog
 from catalog.models import Category, Product, ProductVariant
-from inventory.models import StockReservation
+from inventory.models import StockLedger, StockReservation
+from loyalty.models import LoyaltyTransaction
 from notifications.models import Notification
 from orders.pricing import calculate_gst, calculate_loyalty_points
-from orders.models import Order
-from shipping.models import ShipmentEvent
+from orders.models import Coupon, Order, ReturnRequest
+from payments.models import Payment
+from shipping.models import Shipment, ShipmentEvent
 
 User = get_user_model()
 
 
-@override_settings(RAZORPAY_KEY_ID="", RAZORPAY_KEY_SECRET="", RAZORPAY_WEBHOOK_SECRET="")
+class _FakeChannelLayer:
+    def __init__(self):
+        self.messages = []
+
+    async def group_send(self, group, message):
+        self.messages.append((group, message))
+
+
+@override_settings(DEBUG=True, RAZORPAY_KEY_ID="", RAZORPAY_KEY_SECRET="", RAZORPAY_WEBHOOK_SECRET="", PAYMENT_DEV_FALLBACK_ENABLED=True)
 class CheckoutFlowTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -64,6 +75,52 @@ class CheckoutFlowTests(TestCase):
         cart_resp = self.client.get("/api/cart")
         self.assertEqual(cart_resp.json()["item_count"], 0)
 
+    def test_customer_order_history_is_paginated_for_realtime_screen_scope(self):
+        for index in range(5):
+            Order.objects.create(
+                order_number=f"CSM-PAGE-CUST-{index}",
+                user=self.user,
+                address=self.address,
+                subtotal=Decimal("100.00"),
+                total_amount=Decimal("100.00"),
+                status=Order.Status.CONFIRMED,
+                payment_method=Order.PaymentMethod.COD,
+            )
+
+        response = self.client.get("/api/orders?page=2&per_page=2")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["items"]), 2)
+        self.assertEqual(body["total"], 5)
+        self.assertEqual(body["page"], 2)
+        self.assertEqual(body["per_page"], 2)
+        self.assertEqual(body["pages"], 3)
+
+    def test_admin_order_list_is_paginated_and_status_filter_preserves_metadata(self):
+        for index in range(5):
+            Order.objects.create(
+                order_number=f"CSM-PAGE-ADMIN-{index}",
+                user=self.user,
+                address=self.address,
+                subtotal=Decimal("100.00"),
+                total_amount=Decimal("100.00"),
+                status=Order.Status.DELIVERED if index < 3 else Order.Status.CONFIRMED,
+                payment_method=Order.PaymentMethod.COD,
+            )
+        admin = User.objects.create_user(username="page-admin", email="page-admin@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        response = self.client.get(f"/api/admin/orders?status={Order.Status.DELIVERED}&page=2&per_page=2")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["total"], 3)
+        self.assertEqual(body["page"], 2)
+        self.assertEqual(body["per_page"], 2)
+        self.assertEqual(body["pages"], 2)
+
     def test_prepaid_payment_confirms_order_and_releases_stock_reservation(self):
         self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
         order_resp = self.client.post(
@@ -95,6 +152,153 @@ class CheckoutFlowTests(TestCase):
         self.assertEqual(self.variant.reserved_qty, 0)
         self.assertFalse(StockReservation.objects.filter(order_number=Order.objects.get(id=order_id).order_number, released_at__isnull=True).exists())
 
+    def test_cancel_payment_pending_order_releases_stock_reservation(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": self.address.id, "payment_method": "razorpay"},
+            format="json",
+        )
+        self.assertEqual(order_resp.status_code, 201)
+        order_id = order_resp.json()["id"]
+        order_number = order_resp.json()["order_number"]
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.variant.reserved_qty, 1)
+        self.assertTrue(StockReservation.objects.filter(order_number=order_number, released_at__isnull=True).exists())
+
+        cancel_resp = self.client.post(f"/api/orders/{order_id}/cancel", {}, format="json")
+
+        self.assertEqual(cancel_resp.status_code, 200)
+        self.assertEqual(cancel_resp.json()["status"], Order.Status.CANCELLED)
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.variant.reserved_qty, 0)
+        self.assertFalse(StockReservation.objects.filter(order_number=order_number, released_at__isnull=True).exists())
+        self.assertTrue(StockLedger.objects.filter(variant=self.variant, reason=StockLedger.Reason.RELEASE, reference=order_number, quantity_delta=1).exists())
+        self.assertTrue(ShipmentEvent.objects.filter(order_id=order_id, status=ShipmentEvent.Status.CANCELLED).exists())
+
+    def test_cancel_confirmed_cod_order_restocks_and_rolls_back_loyalty_coupon(self):
+        self.user.loyalty_points = 100
+        self.user.save(update_fields=["loyalty_points"])
+        coupon = Coupon.objects.create(code="SAVE10", discount_type=Coupon.DiscountType.FLAT, value=Decimal("10.00"))
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        self.client.post("/api/cart/coupon", {"coupon_code": coupon.code}, format="json")
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": self.address.id, "payment_method": "cod", "loyalty_points_to_use": 20},
+            format="json",
+        )
+        self.assertEqual(order_resp.status_code, 201)
+        order_id = order_resp.json()["id"]
+        order = Order.objects.get(id=order_id)
+        self.variant.refresh_from_db()
+        self.product.refresh_from_db()
+        coupon.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(order.status, Order.Status.CONFIRMED)
+        self.assertEqual(self.variant.stock_qty, 1)
+        self.assertEqual(self.product.total_sold, 1)
+        self.assertEqual(coupon.used_count, 1)
+        self.assertEqual(self.user.loyalty_points, 100 - order.loyalty_points_used + order.loyalty_points_earned)
+
+        cancel_resp = self.client.post(f"/api/orders/{order_id}/cancel", {}, format="json")
+
+        self.assertEqual(cancel_resp.status_code, 200)
+        self.assertEqual(cancel_resp.json()["status"], Order.Status.CANCELLED)
+        self.variant.refresh_from_db()
+        self.product.refresh_from_db()
+        coupon.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.variant.reserved_qty, 0)
+        self.assertEqual(self.product.total_sold, 0)
+        self.assertEqual(coupon.used_count, 0)
+        self.assertEqual(self.user.loyalty_points, 100)
+        self.assertTrue(StockLedger.objects.filter(variant=self.variant, reason=StockLedger.Reason.RETURN, reference=order.order_number, quantity_delta=1).exists())
+        self.assertTrue(LoyaltyTransaction.objects.filter(user=self.user, order_id=order.id, description__icontains="cancelled").exists())
+
+    def test_admin_cancel_uses_same_inventory_lifecycle(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 1)
+        admin = User.objects.create_user(username="cancel-admin", email="cancel@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        cancel_resp = self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "cancel", "note": "Customer requested cancellation before packing.", "location": "Kanchipuram store"},
+            format="json",
+        )
+
+        self.assertEqual(cancel_resp.status_code, 200)
+        self.assertEqual(cancel_resp.json()["status"], Order.Status.CANCELLED)
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertTrue(ShipmentEvent.objects.filter(order_id=order_id, status=ShipmentEvent.Status.CANCELLED, location="Kanchipuram store").exists())
+
+    def test_admin_cannot_confirm_unpaid_razorpay_order(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "razorpay"}, format="json")
+        self.assertEqual(order_resp.status_code, 201)
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="unpaid-admin", email="unpaid@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        confirm_resp = self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "confirm", "note": "Manual confirmation attempt."},
+            format="json",
+        )
+
+        self.assertEqual(confirm_resp.status_code, 400)
+        self.assertIn("payment", confirm_resp.json()["detail"].lower())
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.status, Order.Status.PAYMENT_PENDING)
+        self.assertEqual(order.payment.status, Payment.Status.PENDING)
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.variant.reserved_qty, 1)
+
+    def test_admin_cannot_create_label_for_unpaid_razorpay_order(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "razorpay"}, format="json")
+        self.assertEqual(order_resp.status_code, 201)
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="label-admin", email="label@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        label_resp = self.client.post(
+            f"/api/admin/orders/{order_id}/workflow",
+            {"action": "create_label", "provider": "manual"},
+            format="json",
+        )
+
+        self.assertEqual(label_resp.status_code, 400)
+        self.assertIn("payment", label_resp.json()["detail"].lower())
+        self.assertFalse(Shipment.objects.filter(order_id=order_id).exists())
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.status, Order.Status.PAYMENT_PENDING)
+
+    @override_settings(DEBUG=True, RAZORPAY_KEY_ID="", RAZORPAY_KEY_SECRET="", PAYMENT_DEV_FALLBACK_ENABLED=False)
+    def test_prepaid_checkout_requires_gateway_before_creating_order(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": self.address.id, "payment_method": "razorpay"},
+            format="json",
+        )
+
+        self.assertEqual(order_resp.status_code, 503)
+        self.assertEqual(Order.objects.count(), 0)
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.variant.reserved_qty, 0)
+        self.assertEqual(self.client.get("/api/cart").json()["item_count"], 1)
+
     def test_admin_shipment_marks_order_delivered_and_notifies_customer(self):
         self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
         order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
@@ -125,6 +329,38 @@ class CheckoutFlowTests(TestCase):
         detail_resp = self.client.get(f"/api/admin/orders?status={Order.Status.DELIVERED}")
         tracking_events = detail_resp.json()["items"][0]["tracking_events"]
         self.assertTrue(any(event["status"] == ShipmentEvent.Status.DELIVERED for event in tracking_events))
+
+    def test_admin_shipment_publishes_realtime_order_update(self):
+        from unittest.mock import patch
+
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        admin = User.objects.create_user(username="realtime-admin", email="realtime-admin@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+        channel_layer = _FakeChannelLayer()
+
+        with patch("orders.realtime.get_channel_layer", return_value=channel_layer):
+            response = self.client.post(
+                "/api/admin/shipments",
+                {
+                    "order": order_id,
+                    "provider": "manual",
+                    "awb_number": "LIVE-AWB-1",
+                    "status": "out_for_delivery",
+                    "event_location": "Chennai last-mile hub",
+                    "event_note": "Package is with delivery partner.",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        groups = {group for group, _message in channel_layer.messages}
+        self.assertIn(f"orders_user_{self.user.id}", groups)
+        self.assertIn(f"orders_order_{order_id}", groups)
+        self.assertIn("orders_admin", groups)
+        payloads = [message["payload"] for _group, message in channel_layer.messages]
+        self.assertTrue(any(payload["type"] == "order.update" and payload["event"]["status"] == ShipmentEvent.Status.OUT_FOR_DELIVERY for payload in payloads))
 
     def test_public_tracking_lookup_requires_order_or_awb_and_phone_match(self):
         self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
@@ -170,6 +406,8 @@ class CheckoutFlowTests(TestCase):
         order = Order.objects.get(id=order_id)
         self.assertTrue(order.tracking_number.startswith("CSM"))
         self.assertTrue(order.shipment.label_url)
+        self.assertEqual(order.courier_url, "")
+        self.assertEqual(order.shipment.tracking_url, "")
         self.assertTrue(AdminAuditLog.objects.filter(action="order.create_label", entity_id=str(order.id)).exists())
 
         rto_resp = self.client.post(
@@ -184,6 +422,19 @@ class CheckoutFlowTests(TestCase):
         label_download = self.client.get(f"/api/admin/shipments/{order.shipment.id}/label")
         self.assertEqual(label_download.status_code, 200)
         self.assertIn(order.order_number, label_download.content.decode())
+
+    @override_settings(STORE_CONTACT_EMAIL="orders@csmsilks.com")
+    def test_shiprocket_payload_uses_store_contact_email_instead_of_local_placeholder(self):
+        from shipping.shiprocket import build_order_payload
+
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order = Order.objects.prefetch_related("items").get(id=order_resp.json()["id"])
+
+        payload = build_order_payload(order)
+
+        self.assertEqual(payload["billing_email"], "orders@csmsilks.com")
+        self.assertNotIn(".local", payload["billing_email"])
 
     @override_settings(SHIPROCKET_WEBHOOK_SECRET="testsecret")
     def test_courier_webhook_updates_tracking_and_ignores_duplicate_event(self):
@@ -228,6 +479,95 @@ class CheckoutFlowTests(TestCase):
         invoice_resp = self.client.get(f"/api/orders/{order_resp.json()['id']}/invoice")
         self.assertEqual(invoice_resp.status_code, 200)
         self.assertIn("CSM Silks Tax Invoice", invoice_resp.content.decode())
+
+    def test_customer_cannot_request_return_before_delivery(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+
+        return_resp = self.client.post(
+            "/api/returns",
+            {"order_id": order_id, "reason": "Changed mind", "details": "Trying to return before delivery."},
+            format="json",
+        )
+
+        self.assertEqual(return_resp.status_code, 400)
+        self.assertIn("delivered", return_resp.json()["detail"].lower())
+        self.assertFalse(ReturnRequest.objects.filter(order_id=order_id).exists())
+        self.assertEqual(Order.objects.get(id=order_id).status, Order.Status.CONFIRMED)
+
+    def test_customer_cannot_create_duplicate_active_return(self):
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post("/api/orders", {"address_id": self.address.id, "payment_method": "cod"}, format="json")
+        order_id = order_resp.json()["id"]
+        order = Order.objects.get(id=order_id)
+        order.status = Order.Status.DELIVERED
+        order.delivered_at = timezone.now()
+        order.save(update_fields=["status", "delivered_at", "updated_at"])
+
+        first_resp = self.client.post(
+            "/api/returns",
+            {"order_id": order_id, "reason": "Size issue", "details": "First return request."},
+            format="json",
+        )
+        second_resp = self.client.post(
+            "/api/returns",
+            {"order_id": order_id, "reason": "Duplicate", "details": "Second return request."},
+            format="json",
+        )
+
+        self.assertEqual(first_resp.status_code, 201)
+        self.assertEqual(second_resp.status_code, 400)
+        self.assertEqual(ReturnRequest.objects.filter(order_id=order_id).count(), 1)
+        self.assertEqual(Order.objects.get(id=order_id).status, Order.Status.RETURN_INITIATED)
+
+    def test_admin_refund_return_restocks_payment_and_loyalty_once(self):
+        self.user.loyalty_points = 100
+        self.user.save(update_fields=["loyalty_points"])
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": self.address.id, "payment_method": "cod", "loyalty_points_to_use": 20},
+            format="json",
+        )
+        order_id = order_resp.json()["id"]
+        order = Order.objects.get(id=order_id)
+        order.status = Order.Status.DELIVERED
+        order.delivered_at = timezone.now()
+        order.save(update_fields=["status", "delivered_at", "updated_at"])
+        self.variant.refresh_from_db()
+        self.assertEqual(self.variant.stock_qty, 1)
+
+        return_resp = self.client.post(
+            "/api/returns",
+            {"order_id": order_id, "reason": "Fabric defect", "details": "Customer reported a weaving defect."},
+            format="json",
+        )
+        self.assertEqual(return_resp.status_code, 201)
+        return_id = return_resp.json()["id"]
+        admin = User.objects.create_user(username="return-admin", email="return@example.com", password="admin123", is_staff=True)
+        self.client.force_authenticate(admin)
+
+        refund_resp = self.client.patch(f"/api/admin/returns/{return_id}", {"status": "refunded"}, format="json")
+        second_refund_resp = self.client.patch(f"/api/admin/returns/{return_id}", {"status": "refunded"}, format="json")
+
+        self.assertEqual(refund_resp.status_code, 200)
+        self.assertEqual(second_refund_resp.status_code, 200)
+        order.refresh_from_db()
+        self.variant.refresh_from_db()
+        self.product.refresh_from_db()
+        self.user.refresh_from_db()
+        payment = Payment.objects.get(order=order)
+        self.assertEqual(order.status, Order.Status.REFUNDED)
+        self.assertEqual(ReturnRequest.objects.get(id=return_id).status, ReturnRequest.Status.REFUNDED)
+        self.assertEqual(self.variant.stock_qty, 2)
+        self.assertEqual(self.product.total_sold, 0)
+        self.assertEqual(payment.status, Payment.Status.REFUNDED)
+        self.assertEqual(payment.refunded_amount, order.total_amount)
+        self.assertEqual(self.user.loyalty_points, 100)
+        self.assertEqual(StockLedger.objects.filter(variant=self.variant, reason=StockLedger.Reason.RETURN, reference=f"{order.order_number}:return").count(), 1)
+        self.assertTrue(ShipmentEvent.objects.filter(order=order, status=ShipmentEvent.Status.REFUNDED).exists())
+        self.assertTrue(Notification.objects.filter(user=self.user, notification_type="order", title__icontains="refunded").exists())
 
 
 class ProductApiTests(TestCase):

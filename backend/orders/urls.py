@@ -5,6 +5,8 @@ from .views import (
     AdminOrderInvoiceView,
     AdminOrderStatusView,
     AdminOrderWorkflowView,
+    AdminCouponDetailView,
+    AdminCouponListCreateView,
     AdminReturnDetailView,
     AdminReturnListView,
     OrderCancelView,
@@ -26,6 +28,8 @@ urlpatterns = [
     path("admin/orders/<int:order_id>/status", AdminOrderStatusView.as_view()),
     path("admin/orders/<int:order_id>/workflow", AdminOrderWorkflowView.as_view()),
     path("admin/orders/<int:order_id>/invoice", AdminOrderInvoiceView.as_view()),
+    path("admin/coupons", AdminCouponListCreateView.as_view()),
+    path("admin/coupons/<int:coupon_id>", AdminCouponDetailView.as_view()),
     path("admin/returns", AdminReturnListView.as_view()),
     path("admin/returns/<int:return_id>", AdminReturnDetailView.as_view()),
 ]

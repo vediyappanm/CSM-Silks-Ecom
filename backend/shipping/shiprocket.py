@@ -97,7 +97,7 @@ def build_order_payload(order: Order) -> dict:
         "billing_pincode": address.get("pin_code", ""),
         "billing_state": address.get("state", ""),
         "billing_country": address.get("country", "India"),
-        "billing_email": order.user.email or "orders@csmsilks.local",
+        "billing_email": order.user.email or settings.STORE_CONTACT_EMAIL,
         "billing_phone": address.get("phone") or order.user.phone or "",
         "shipping_is_billing": True,
         "order_items": order_items,

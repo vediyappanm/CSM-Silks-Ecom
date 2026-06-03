@@ -15,16 +15,19 @@ export function FloatingButtons() {
 }
 
 export function ToastStack() {
-  const { toast } = useApp();
+  const { toast, dismissToast } = useApp();
   if (!toast) return null;
   return (
     <div className="toast-stack">
       <div className="toast" key={toast.id}>
         <div className="toast-ic">{toast.icon}</div>
-        <div>
+        <div className="toast-copy">
           <div className="toast-title">{toast.title}</div>
           <div className="toast-msg">{toast.msg}</div>
         </div>
+        <button className="toast-close" type="button" onClick={dismissToast} aria-label="Dismiss notification">
+          x
+        </button>
       </div>
     </div>
   );

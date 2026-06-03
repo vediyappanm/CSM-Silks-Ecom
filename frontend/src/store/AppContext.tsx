@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { api } from '@/lib/api';
+import { connectNotificationRealtime } from '@/lib/realtime';
 import type { CartItem, CartResponse, CartTotals, Product, Toast, User } from '@/types';
 
 interface AppState {
@@ -10,7 +11,9 @@ interface AppState {
   cartCount: number;
   user: User | null;
   isAuthed: boolean;
+  authReady: boolean;
   couponCode: string;
+  unreadNotifications: number;
 }
 
 interface AppContextType extends AppState {
@@ -20,14 +23,19 @@ interface AppContextType extends AppState {
   toggleWishlist: (product: Product) => Promise<void>;
   isInWishlist: (id: number) => boolean;
   showToast: (icon: string, title: string, msg: string) => void;
+  dismissToast: () => void;
   clearCart: () => Promise<void>;
   applyCoupon: (couponCode: string) => Promise<void>;
+  removeCoupon: () => Promise<void>;
   getCartTotals: () => CartTotals;
+  refreshCart: () => Promise<CartResponse | null>;
   refreshSession: () => Promise<void>;
+  refreshNotifications: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
+const GUEST_CART_KEY = 'csm_guest_cart';
 
 function toNumber(value: number | string | undefined) {
   return Number(value || 0);
@@ -41,6 +49,12 @@ function cartFromResponse(data: CartResponse): CartItem[] {
     qty: item.quantity,
     cart_item_id: item.id,
     variant_id: item.variant_id,
+    variant_sku: item.variant_sku,
+    variant_available_qty: item.variant_available_qty,
+    variant_stock_qty: item.variant_stock_qty,
+    variant_reserved_qty: item.variant_reserved_qty,
+    stock_status: item.stock_status,
+    stock_message: item.stock_message,
   }));
 }
 
@@ -59,21 +73,96 @@ function variantId(product: Product) {
   return product.variant_id || product.default_variant_id || product.variants?.[0]?.id;
 }
 
+function clearGuestCart() {
+  try {
+    localStorage.removeItem(GUEST_CART_KEY);
+  } catch {
+    // Storage can fail in private mode; server cart remains the source of truth.
+  }
+}
+
+function redirectToLogin(nextPath = window.location.pathname + window.location.search + window.location.hash) {
+  const safeNext = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/';
+  window.setTimeout(() => {
+    if (window.location.pathname !== '/login') window.location.assign(`/login?next=${encodeURIComponent(safeNext)}`);
+  }, 600);
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [serverTotals, setServerTotals] = useState<CartTotals | null>(null);
   const [couponCode, setCouponCode] = useState('');
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   const showToast = useCallback((icon: string, title: string, msg: string) => {
-    setToast({ icon, title, msg, id: Date.now() });
-    setTimeout(() => setToast(null), 4000);
+    const id = Date.now();
+    setToast({ icon, title, msg, id });
+    window.setTimeout(() => {
+      setToast(current => current?.id === id ? null : current);
+    }, 4000);
   }, []);
 
+  const dismissToast = useCallback(() => {
+    setToast(null);
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!api.tokens.getAccessToken()) {
+      setUnreadNotifications(0);
+      return;
+    }
+    try {
+      const data = await api.notifications.count();
+      setUnreadNotifications(Number(data.unread_count || 0));
+    } catch {
+      setUnreadNotifications(0);
+    }
+  }, []);
+
+  const applyCartResponse = useCallback((data: CartResponse) => {
+    setCart(cartFromResponse(data));
+    setServerTotals(totalsFromResponse(data));
+    setCouponCode(data.coupon_code || '');
+  }, []);
+
+  const refreshCart = useCallback(async () => {
+    if (!api.tokens.getAccessToken()) {
+      clearGuestCart();
+      setCart([]);
+      setServerTotals(null);
+      setCouponCode('');
+      return null;
+    }
+    const data = await api.cart.get();
+    applyCartResponse(data);
+    return data;
+  }, [applyCartResponse]);
+
   const refreshSession = useCallback(async () => {
-    if (!api.tokens.getAccessToken()) return;
+    if (!api.tokens.hasStoredSession()) {
+      setUser(null);
+      clearGuestCart();
+      setCart([]);
+      setUnreadNotifications(0);
+      setAuthReady(true);
+      return;
+    }
+    const sessionReady = await api.tokens.ensureFreshAccessToken();
+    if (!sessionReady) {
+      setUser(null);
+      clearGuestCart();
+      setCart([]);
+      setServerTotals(null);
+      setCouponCode('');
+      setWishlist([]);
+      setUnreadNotifications(0);
+      setAuthReady(true);
+      return;
+    }
     try {
       const me = await api.auth.me();
       setUser(me);
@@ -84,6 +173,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setServerTotals(null);
         setCouponCode('');
         setWishlist([]);
+        setUnreadNotifications(0);
         return;
       }
       if (me.role === 'admin' || me.role === 'super_admin') {
@@ -91,14 +181,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setServerTotals(null);
         setCouponCode('');
         setWishlist([]);
+        setUnreadNotifications(0);
         return;
       }
-      const cartData = await api.cart.get();
-      setCart(cartFromResponse(cartData));
-      setServerTotals(totalsFromResponse(cartData));
-      setCouponCode(cartData.coupon_code || '');
+      clearGuestCart();
+      await refreshCart();
       const wishData = await api.wishlist.list().catch(() => [] as { product: Product }[]);
       setWishlist(wishData.map(item => item.product));
+      await refreshNotifications();
     } catch {
       api.tokens.clearTokens();
       setUser(null);
@@ -106,51 +196,63 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setServerTotals(null);
       setCouponCode('');
       setWishlist([]);
+      setUnreadNotifications(0);
+    } finally {
+      setAuthReady(true);
     }
-  }, []);
+  }, [refreshCart, refreshNotifications]);
 
   useEffect(() => {
     void Promise.resolve().then(refreshSession);
   }, [refreshSession]);
 
+  useEffect(() => {
+    if (!user || user.role === 'admin' || user.role === 'super_admin') return undefined;
+    return connectNotificationRealtime({
+      onMessage: message => {
+        if (typeof message.unread_count === 'number') {
+          setUnreadNotifications(message.unread_count);
+        }
+        if (message.type === 'notification.created' && message.notification) {
+          showToast('LIVE', message.notification.title, message.notification.body);
+        }
+      },
+      onStatus: status => {
+        if (status === 'connected') void refreshNotifications();
+      },
+    });
+  }, [refreshNotifications, showToast, user]);
+
   const addToCart = useCallback(async (product: Product) => {
     const vid = variantId(product);
-    if (api.tokens.getAccessToken() && vid) {
-      try {
-        const data = await api.cart.add(vid, 1);
-        setCart(cartFromResponse(data));
-        setServerTotals(totalsFromResponse(data));
-        setCouponCode(data.coupon_code || '');
-        showToast('OK', 'Added to Cart', `${product.name} added to your cart`);
-        return;
-      } catch (err) {
-        showToast('!', 'Cart Error', err instanceof Error ? err.message : 'Unable to add item');
-      }
+    if (!api.tokens.getAccessToken()) {
+      showToast('!', 'Login required', 'Sign in to add live inventory to your cart');
+      redirectToLogin(window.location.pathname + window.location.search + window.location.hash);
+      return;
     }
-    setCart(prev => {
-      const existing = prev.find(c => c.id === product.id && c.variant_id === vid);
-      if (existing) {
-        return prev.map(c => c.id === product.id && c.variant_id === vid ? { ...c, qty: c.qty + 1 } : c);
-      }
-      return [...prev, { ...product, variant_id: vid, qty: 1 }];
-    });
-    setServerTotals(null);
-    setCouponCode('');
-    showToast('OK', 'Added locally', 'Sign in before checkout to sync your cart');
-  }, [showToast]);
+    if (!vid) {
+      showToast('!', 'SKU unavailable', 'This product does not have a sellable live variant');
+      return;
+    }
+    try {
+      const data = await api.cart.add(vid, 1);
+      applyCartResponse(data);
+      showToast('OK', 'Added to Cart', `${product.name} added to your cart`);
+    } catch (err) {
+      showToast('!', 'Cart Error', err instanceof Error ? err.message : 'Unable to add item');
+    }
+  }, [applyCartResponse, showToast]);
 
   const removeFromCart = useCallback(async (id: number) => {
     const item = cart.find(c => c.id === id || c.cart_item_id === id);
     if (api.tokens.getAccessToken() && item?.cart_item_id) {
       const data = await api.cart.remove(item.cart_item_id);
-      setCart(cartFromResponse(data));
-      setServerTotals(totalsFromResponse(data));
-      setCouponCode(data.coupon_code || '');
+      applyCartResponse(data);
       return;
     }
-    setCart(prev => prev.filter(c => c.id !== id && c.cart_item_id !== id));
+    setCart([]);
     setServerTotals(null);
-  }, [cart]);
+  }, [applyCartResponse, cart]);
 
   const updateQty = useCallback(async (id: number, delta: number) => {
     const item = cart.find(c => c.id === id || c.cart_item_id === id);
@@ -158,19 +260,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const nextQty = Math.max(1, item.qty + delta);
     if (api.tokens.getAccessToken() && item.cart_item_id) {
       const data = await api.cart.update(item.cart_item_id, nextQty);
-      setCart(cartFromResponse(data));
-      setServerTotals(totalsFromResponse(data));
-      setCouponCode(data.coupon_code || '');
+      applyCartResponse(data);
       return;
     }
-    setCart(prev => prev.map(c => (c.id === id || c.cart_item_id === id) ? { ...c, qty: nextQty } : c));
-    setServerTotals(null);
-  }, [cart]);
+    showToast('!', 'Login required', 'Sign in to update your server cart');
+    redirectToLogin('/cart');
+  }, [applyCartResponse, cart, showToast]);
 
   const toggleWishlist = useCallback(async (product: Product) => {
-    if (api.tokens.getAccessToken()) {
-      await api.wishlist.toggle(product.id).catch(() => null);
+    if (!api.tokens.getAccessToken()) {
+      showToast('!', 'Sign in to save', 'Login from Account to save this to your wishlist');
+      window.setTimeout(() => {
+        if (window.location.pathname !== '/login') window.location.assign('/login?next=/wishlist');
+      }, 600);
+      return;
     }
+    await api.wishlist.toggle(product.id).catch(() => null);
     setWishlist(prev => {
       const idx = prev.findIndex(w => w.id === product.id);
       if (idx >= 0) {
@@ -191,6 +296,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCart([]);
     setServerTotals(null);
     setCouponCode('');
+    clearGuestCart();
   }, []);
 
   const applyCoupon = useCallback(async (code: string) => {
@@ -200,35 +306,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (!api.tokens.getAccessToken()) {
-      if (nextCode === 'CSM10') {
-        const subtotal = cart.reduce((a, c) => a + toNumber(c.price) * c.qty, 0);
-        const discount = Math.round(subtotal * 0.1);
-        const taxable = subtotal - discount;
-        const cgst = Math.round(taxable * 0.025);
-        const sgst = Math.round(taxable * 0.025);
-        const shipping = subtotal >= 999 || subtotal === 0 ? 0 : 99;
-        setServerTotals({ subtotal, discount, cgst, sgst, shipping, total: taxable + cgst + sgst + shipping });
-        setCouponCode(nextCode);
-        showToast('OK', 'Promo applied locally', 'Sign in to use this coupon at checkout');
-        return;
-      }
-      showToast('!', 'Invalid Code', 'Try CSM10 for 10% off');
+      showToast('!', 'Login required', 'Sign in so the backend can validate this coupon');
+      redirectToLogin('/cart');
       return;
     }
     const data = await api.cart.coupon(nextCode);
-    setCart(cartFromResponse(data));
-    setServerTotals(totalsFromResponse(data));
-    setCouponCode(data.coupon_code || nextCode);
+    applyCartResponse(data);
     showToast('OK', 'Coupon Applied', `${nextCode} updated your cart totals`);
-  }, [cart, showToast]);
+  }, [applyCartResponse, showToast]);
+
+  const removeCoupon = useCallback(async () => {
+    if (!couponCode && !serverTotals?.discount) return;
+    if (api.tokens.getAccessToken()) {
+      const data = await api.cart.coupon('');
+      applyCartResponse(data);
+    } else {
+      setServerTotals(null);
+      setCouponCode('');
+      redirectToLogin('/cart');
+    }
+    showToast('OK', 'Coupon removed', 'Your cart total has been refreshed');
+  }, [applyCartResponse, couponCode, serverTotals, showToast]);
 
   const logout = useCallback(async () => {
     await api.auth.logout();
     setUser(null);
+    setAuthReady(true);
     setCart([]);
     setServerTotals(null);
     setCouponCode('');
     setWishlist([]);
+    setUnreadNotifications(0);
+    clearGuestCart();
   }, []);
 
   const getCartTotals = useCallback((): CartTotals => {
@@ -251,17 +360,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cartCount,
       user,
       isAuthed: Boolean(user),
+      authReady,
       couponCode,
+      unreadNotifications,
       addToCart,
       removeFromCart,
       updateQty,
       toggleWishlist,
       isInWishlist,
       showToast,
+      dismissToast,
       clearCart,
       applyCoupon,
+      removeCoupon,
       getCartTotals,
+      refreshCart,
       refreshSession,
+      refreshNotifications,
       logout,
     }}>
       {children}

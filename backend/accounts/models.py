@@ -74,6 +74,7 @@ class Address(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="addresses", on_delete=models.CASCADE)
     label = models.CharField(max_length=30, default="Home")
     full_name = models.CharField(max_length=120)
+    email = models.EmailField(blank=True)
     phone = models.CharField(max_length=15)
     address_line_1 = models.CharField(max_length=255)
     address_line_2 = models.CharField(max_length=255, blank=True)

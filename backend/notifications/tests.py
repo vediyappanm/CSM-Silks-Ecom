@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from rest_framework.test import APIClient
 
 from .models import Notification
 from .services import create_notification
@@ -84,3 +85,84 @@ class NotificationEmailTests(TestCase):
         notification.refresh_from_db()
         self.assertTrue(notification.wa_sent)
         self.assertEqual(notification.data["whatsapp_provider"], "gupshup")
+
+
+class _FakeChannelLayer:
+    def __init__(self):
+        self.messages = []
+
+    async def group_send(self, group, message):
+        self.messages.append((group, message))
+
+
+class NotificationRealtimeTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="+919800002222",
+            phone="+919800002222",
+            password="customer123",
+            is_verified=True,
+        )
+
+    @override_settings(NOTIFICATION_EMAIL_ENABLED=False, WHATSAPP_ENABLED=False)
+    @patch("notifications.realtime.get_channel_layer")
+    def test_create_notification_publishes_realtime_event(self, get_channel_layer):
+        channel_layer = _FakeChannelLayer()
+        get_channel_layer.return_value = channel_layer
+
+        notification = create_notification(
+            user=self.user,
+            title="Order packed",
+            body="Your order is packed.",
+            notification_type="shipping",
+            data={"order_number": "CSM-REALTIME"},
+        )
+
+        self.assertEqual(len(channel_layer.messages), 1)
+        group, message = channel_layer.messages[0]
+        self.assertEqual(group, f"notifications_user_{self.user.id}")
+        self.assertEqual(message["payload"]["type"], "notification.created")
+        self.assertEqual(message["payload"]["notification"]["id"], notification.id)
+        self.assertEqual(message["payload"]["unread_count"], 1)
+
+    @patch("notifications.realtime.get_channel_layer")
+    def test_mark_read_publishes_zero_unread_count(self, get_channel_layer):
+        channel_layer = _FakeChannelLayer()
+        get_channel_layer.return_value = channel_layer
+        Notification.objects.create(user=self.user, title="One", body="Body", notification_type="order")
+        Notification.objects.create(user=self.user, title="Two", body="Body", notification_type="shipping")
+        client = APIClient()
+        client.force_authenticate(self.user)
+
+        response = client.patch("/api/notifications")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Notification.objects.filter(user=self.user, is_read=False).exists())
+        self.assertEqual(len(channel_layer.messages), 1)
+        group, message = channel_layer.messages[0]
+        self.assertEqual(group, f"notifications_user_{self.user.id}")
+        self.assertEqual(message["payload"]["type"], "notifications.read")
+        self.assertEqual(message["payload"]["unread_count"], 0)
+
+    def test_notification_list_is_paginated_and_returns_unread_count(self):
+        for index in range(5):
+            Notification.objects.create(
+                user=self.user,
+                title=f"Notification {index}",
+                body="Body",
+                notification_type="order",
+                is_read=index < 2,
+            )
+        client = APIClient()
+        client.force_authenticate(self.user)
+
+        response = client.get("/api/notifications?page=2&per_page=2")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(len(body["items"]), 2)
+        self.assertEqual(body["total"], 5)
+        self.assertEqual(body["page"], 2)
+        self.assertEqual(body["per_page"], 2)
+        self.assertEqual(body["pages"], 3)
+        self.assertEqual(body["unread_count"], 3)

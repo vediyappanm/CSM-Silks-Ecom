@@ -1,8 +1,16 @@
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; padding: 0; }
-html { scroll-behavior: smooth; }
+html {
+  width: 100%;
+  min-height: 100%;
+  scroll-behavior: smooth;
+  background: var(--page);
+}
+
 body {
+  width: 100%;
   min-width: 320px;
+  min-height: 100%;
   background: var(--page);
   color: var(--ink);
   font-family: var(--font-body);
@@ -10,95 +18,261 @@ body {
   text-rendering: geometricPrecision;
   overflow-x: hidden;
 }
-button, input, select, textarea { font: inherit; letter-spacing: 0; }
-button { cursor: pointer; }
-a { color: inherit; text-decoration: none; }
-img { display: block; max-width: 100%; }
-main { background: var(--page); }
-::selection { background: var(--gold-2); color: var(--ink); }
 
+#root {
+  width: 100%;
+  min-height: 100vh;
+  background: var(--page);
+}
+
+button, input, select, textarea {
+  font: inherit;
+  letter-spacing: 0;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+main {
+  background: var(--page);
+}
+
+::selection {
+  background: var(--gold-2);
+  color: var(--ink);
+}
+
+/* Custom Focused Outlines */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--gold) !important;
+  box-shadow: var(--focus-shadow) !important;
+}
+
+/* Modern Input Fields */
+input, select, textarea {
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+  color: var(--ink);
+  transition: var(--transition);
+}
+
+textarea {
+  height: auto;
+  padding: 12px 16px;
+}
+
+/* Elegant Button Subsystem */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 42px;
-  padding: 0 18px;
+  min-height: 46px;
+  padding: 0 24px;
   border: 1px solid transparent;
   border-radius: var(--radius);
   font-size: 14px;
-  font-weight: 800;
-  transition: transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+  font-weight: 700;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
 }
-.btn:hover { transform: translateY(-1px); }
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
 .btn-primary,
 .btn-gold {
-  background: var(--gold);
-  color: #140f0b;
-  box-shadow: 0 10px 24px rgba(185, 132, 46, .22);
+  background: linear-gradient(135deg, var(--gold), var(--gold-2));
+  color: var(--ink);
+  box-shadow: 0 6px 20px rgba(179, 126, 40, 0.22);
 }
+
+.btn-primary:hover,
+.btn-gold:hover {
+  background: linear-gradient(135deg, var(--gold-2), #ffdf85);
+  box-shadow: 0 8px 24px rgba(179, 126, 40, 0.35);
+}
+
 .btn-secondary,
 .btn-ghost {
   background: var(--surface);
-  border-color: var(--line);
+  border: 1px solid var(--line);
   color: var(--ink);
 }
+
+.btn-secondary:hover,
+.btn-ghost:hover {
+  background: var(--surface-2);
+  border-color: var(--soft);
+}
+
 .btn-wa {
   background: var(--green);
   color: #fff;
+  box-shadow: 0 6px 20px rgba(10, 82, 67, 0.15);
 }
+
+.btn-wa:hover {
+  background: var(--green-2);
+  box-shadow: 0 8px 24px rgba(10, 82, 67, 0.28);
+}
+
+/* Layout Page Sections */
 .section {
-  padding: 64px 4vw;
+  padding: 80px 4vw;
 }
+
 .surface-section {
   background:
-    linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,0)),
+    linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0)),
     var(--page);
 }
+
 .section-heading {
   max-width: 720px;
-  margin: 0 auto 28px;
+  margin: 0 auto 36px;
 }
-.section-heading.left { margin-left: 0; text-align: left; }
-.section-heading.center { text-align: center; }
+
+.section-heading.left {
+  margin-left: 0;
+  text-align: left;
+}
+
+.section-heading.center {
+  text-align: center;
+}
+
 .section-label,
 .catalog-hero span,
 .search-top span,
 .page-title-row span {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   color: var(--gold);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
+  letter-spacing: 2px;
   text-transform: uppercase;
 }
+
 .section-heading h2 {
   color: var(--surface);
   font-family: var(--font-display);
-  font-size: 52px;
+  font-size: 56px;
   font-weight: 400;
-  line-height: 1;
+  line-height: 1.1;
+  letter-spacing: 0;
 }
-.section-heading.light h2 { color: var(--ink); }
+
+.section-heading.light h2 {
+  color: var(--ink);
+}
+
 .section-heading h2 span {
   display: block;
   color: var(--ruby);
   font-style: italic;
+  font-family: var(--font-display);
 }
+
 .section-heading p {
-  margin-top: 12px;
+  margin-top: 14px;
   color: var(--admin-muted);
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: 16px;
+  line-height: 1.6;
 }
-.section-heading.light p { color: var(--muted); }
-.loading-state {
+
+.section-heading.light p {
   color: var(--muted);
+}
+
+.loading-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.error-boundary-page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px;
+  background: var(--page);
+  color: var(--ink);
+}
+
+.error-boundary-card {
+  width: min(480px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+.error-boundary-mark {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--gold-2);
+  font-family: var(--font-display);
+  font-size: 26px;
   font-weight: 800;
 }
 
+.error-boundary-card h1 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 400;
+}
+
+.error-boundary-card p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 @media (max-width: 760px) {
-  .section { padding: 44px 20px; }
-  .section-heading h2 { font-size: 38px; }
+  .section { padding: 56px 20px; }
+  .section-heading h2 { font-size: 42px; }
   .btn { width: 100%; }
 }

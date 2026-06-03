@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import CartItemView, CartView, CouponView, WishlistView
+from .views import CartItemView, CartView, CouponView, WishlistDetailView, WishlistView
 
 urlpatterns = [
     path("cart", CartView.as_view()),
@@ -8,4 +8,5 @@ urlpatterns = [
     path("cart/coupon", CouponView.as_view()),
     path("checkout/summary", CartView.as_view()),
     path("wishlist", WishlistView.as_view()),
+    path("wishlist/<slug:product_slug>", WishlistDetailView.as_view()),
 ]

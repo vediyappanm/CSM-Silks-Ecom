@@ -7,6 +7,9 @@ class TryOnSerializer(serializers.Serializer):
     body_type = serializers.CharField(required=False, allow_blank=True)
     drape_style = serializers.CharField(required=False, allow_blank=True)
     occasion = serializers.CharField(required=False, allow_blank=True)
+    user_photo_base64 = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    user_photo_media_type = serializers.CharField(required=False, allow_blank=True, default="image/jpeg")
+    product_image_url = serializers.URLField(required=False, allow_blank=True)
 
 
 class VoiceSearchSerializer(serializers.Serializer):

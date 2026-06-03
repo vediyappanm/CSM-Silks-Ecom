@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, MapPin, ShieldCheck, Star, Tag, Truck } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
 import type { DeliveryCheck, Product, ProductReview } from '@/types';
@@ -15,25 +16,44 @@ export function ProductDetail() {
   const [product, setProduct] = useState<Product | null>(null);
   const [reviews, setReviews] = useState<ProductReview[]>([]);
   const [pinCode, setPinCode] = useState('600001');
+  const pinCodeRef = useRef(pinCode);
   const [delivery, setDelivery] = useState<DeliveryCheck | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!id) return;
-    window.scrollTo(0, 0);
-    api.products.get(id)
+    pinCodeRef.current = pinCode;
+  }, [pinCode]);
+
+  const loadProduct = useCallback(() => {
+    if (!id) return Promise.resolve();
+    return api.products.get(id)
       .then((item) => {
         setProduct(item);
         setSelectedThumb(0);
         setSelectedColor(0);
         return Promise.allSettled([
           api.products.reviews.list(item.slug).then(setReviews),
-          api.products.delivery(item.slug, '600001').then(setDelivery),
+          api.products.delivery(item.slug, pinCodeRef.current).then(setDelivery),
         ]);
       })
       .catch(() => setProduct(null))
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    window.scrollTo(0, 0);
+    void loadProduct();
+  }, [id, loadProduct]);
+
+  const realtimeStatus = useCatalogLiveRefresh({
+    enabled: Boolean(product || id),
+    productId: product?.id,
+    slug: product?.slug || id,
+    onUpdate: () => {
+      void loadProduct();
+    },
+  });
 
   if (loading) {
     return (
@@ -95,14 +115,16 @@ export function ProductDetail() {
           </div>
           <div className="pd-thumbs">
             {(p.images?.length ? p.images : p.colors || ['#7a1e1e', '#c4923a', '#0f5b45']).slice(0, 4).map((value, i) => (
-              <div
+              <button
+                type="button"
                 key={i}
                 className={`pd-thumb ${i === selectedThumb ? 'on' : ''}`}
                 style={value.startsWith('http') ? { backgroundImage: `url(${value})` } : { background: value }}
                 onClick={() => setSelectedThumb(i)}
+                aria-label={`View product image ${i + 1}`}
               >
                 {!value.startsWith('http') && 'CSM'}
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -114,6 +136,7 @@ export function ProductDetail() {
           <div className="pd-badges">
             <span className="pd-badge pdb-gold">{p.cat}</span>
             <span className="pd-badge pdb-grn">{activeStock > 0 ? `${activeStock} In Stock` : 'Sold Out'}</span>
+            <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</span>
             {p.assured && <span className="pd-badge pdb-blu">CSM Assured</span>}
             {p.is_gi_tagged && <span className="pd-badge pdb-blu">GI Tagged</span>}
           </div>
@@ -165,11 +188,14 @@ export function ProductDetail() {
           <div className="pd-section-lbl">Select Colour</div>
           <div className="pd-colors">
             {(p.variants?.length ? p.variants : p.colors.map((c, i) => ({ id: i, color_hex: c }))).map((v, i) => (
-              <div
+              <button
+                type="button"
                 key={v.id}
                 className={`pd-color ${i === selectedColor ? 'on' : ''}`}
                 style={{ background: v.color_hex || p.colors[i] }}
                 onClick={() => setSelectedColor(i)}
+                aria-label={`Select colour ${i + 1}`}
+                aria-pressed={i === selectedColor}
               />
             ))}
           </div>

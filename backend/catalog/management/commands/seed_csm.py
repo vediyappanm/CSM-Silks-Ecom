@@ -323,7 +323,7 @@ SERVICEABLE_PINS = ["600001", "600017", "631501", "560001", "400001", "110001", 
 
 
 class Command(BaseCommand):
-    help = "Seed CSM Silks production-retailer demo data."
+    help = "Seed CSM Silks starter retailer catalog data."
 
     @transaction.atomic
     def handle(self, *args, **options):

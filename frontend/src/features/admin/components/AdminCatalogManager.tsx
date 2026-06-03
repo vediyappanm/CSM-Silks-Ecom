@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { ProductVisual } from '@/ui/components';
 import type { AdminProductQuickCreatePayload, CatalogCategory, CatalogCollection, Product } from '@/types';
 
@@ -106,6 +107,17 @@ export function AdminCatalogManager() {
     const id = window.setTimeout(() => void loadCatalog(), 0);
     return () => window.clearTimeout(id);
   }, []);
+
+  const realtimeStatus = useCatalogLiveRefresh({
+    onUpdate: message => {
+      setNotice(
+        message.product?.name
+          ? `Live catalog update received for ${message.product.name}.`
+          : 'Live catalog update received.',
+      );
+      void loadCatalog();
+    },
+  });
 
   const filteredProducts = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -232,6 +244,7 @@ export function AdminCatalogManager() {
           <p>Create a SKU with stock and image once. Customers see it immediately in search, women, men, and product detail pages.</p>
         </div>
         <div className="admin-head-actions">
+          <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live catalog' : realtimeStatus}</span>
           <button className="admin-soft-btn" onClick={() => void loadCatalog()} disabled={loading}>
             <RefreshCw size={16} /> Refresh
           </button>

@@ -22,6 +22,12 @@ class CartItemQuantitySerializer(serializers.Serializer):
 class CartItemSerializer(serializers.ModelSerializer):
     product = ProductListSerializer(read_only=True)
     variant_id = serializers.IntegerField(source="variant.id", read_only=True)
+    variant_sku = serializers.CharField(source="variant.sku", read_only=True)
+    variant_available_qty = serializers.IntegerField(source="variant.available_qty", read_only=True)
+    variant_stock_qty = serializers.IntegerField(source="variant.stock_qty", read_only=True)
+    variant_reserved_qty = serializers.IntegerField(source="variant.reserved_qty", read_only=True)
+    stock_status = serializers.SerializerMethodField()
+    stock_message = serializers.SerializerMethodField()
     line_total = serializers.SerializerMethodField()
     product_name = serializers.CharField(source="product.name", read_only=True)
     product_price = serializers.DecimalField(source="variant.price", max_digits=12, decimal_places=2, read_only=True)
@@ -33,7 +39,13 @@ class CartItemSerializer(serializers.ModelSerializer):
             "id",
             "product_id",
             "variant_id",
+            "variant_sku",
             "quantity",
+            "variant_available_qty",
+            "variant_stock_qty",
+            "variant_reserved_qty",
+            "stock_status",
+            "stock_message",
             "product",
             "product_name",
             "product_price",
@@ -45,6 +57,25 @@ class CartItemSerializer(serializers.ModelSerializer):
 
     def get_line_total(self, obj: CartItem):
         return obj.variant.price * obj.quantity
+
+    def get_stock_status(self, obj: CartItem) -> str:
+        if not obj.variant.is_active:
+            return "inactive"
+        if obj.variant.available_qty <= 0:
+            return "out_of_stock"
+        if obj.variant.available_qty < obj.quantity:
+            return "insufficient"
+        return "ok"
+
+    def get_stock_message(self, obj: CartItem) -> str:
+        status = self.get_stock_status(obj)
+        if status == "inactive":
+            return "This SKU is no longer available"
+        if status == "out_of_stock":
+            return "This SKU is currently sold out"
+        if status == "insufficient":
+            return f"Only {obj.variant.available_qty} units available for this SKU"
+        return f"{obj.variant.available_qty} units available"
 
     def get_product_image(self, obj: CartItem) -> str:
         image = obj.product.images.filter(is_primary=True).first() or obj.product.images.first()
@@ -76,6 +107,8 @@ def cart_totals(cart: Cart) -> dict:
 class CartSerializer(serializers.ModelSerializer):
     items = serializers.SerializerMethodField()
     item_count = serializers.SerializerMethodField()
+    has_stock_issues = serializers.SerializerMethodField()
+    stock_issues = serializers.SerializerMethodField()
     subtotal = serializers.SerializerMethodField()
     discount = serializers.SerializerMethodField()
     cgst = serializers.SerializerMethodField()
@@ -90,6 +123,8 @@ class CartSerializer(serializers.ModelSerializer):
             "id",
             "items",
             "item_count",
+            "has_stock_issues",
+            "stock_issues",
             "subtotal",
             "discount",
             "coupon_code",
@@ -110,6 +145,38 @@ class CartSerializer(serializers.ModelSerializer):
 
     def get_item_count(self, obj: Cart):
         return self._totals(obj)["item_count"]
+
+    def get_stock_issues(self, obj: Cart):
+        issues = []
+        for item in self._totals(obj)["items"]:
+            if not item.variant.is_active:
+                issues.append(
+                    {
+                        "item_id": item.id,
+                        "variant_id": item.variant_id,
+                        "sku": item.variant.sku,
+                        "requested_qty": item.quantity,
+                        "available_qty": item.variant.available_qty,
+                        "status": "inactive",
+                        "message": f"{item.product.name} is no longer available",
+                    }
+                )
+            elif item.variant.available_qty < item.quantity:
+                issues.append(
+                    {
+                        "item_id": item.id,
+                        "variant_id": item.variant_id,
+                        "sku": item.variant.sku,
+                        "requested_qty": item.quantity,
+                        "available_qty": item.variant.available_qty,
+                        "status": "insufficient" if item.variant.available_qty > 0 else "out_of_stock",
+                        "message": f"{item.product.name}: only {item.variant.available_qty} units available",
+                    }
+                )
+        return issues
+
+    def get_has_stock_issues(self, obj: Cart):
+        return bool(self.get_stock_issues(obj))
 
     def get_subtotal(self, obj: Cart):
         return self._totals(obj)["subtotal"]

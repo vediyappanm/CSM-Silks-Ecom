@@ -19,4 +19,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["gunicorn", "csm_backend.wsgi:application", "--chdir", "backend", "--bind", "0.0.0.0:8000", "--workers", "4"]
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "csm_backend.asgi:application"]

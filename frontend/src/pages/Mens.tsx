@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { MessageCircle, Ruler, Shirt, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
+import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
+import { ProductGridSkeleton } from '@/ui/components';
 import type { CatalogFacets, Product } from '@/types';
 
 const MEN_CATS = [
@@ -34,12 +36,12 @@ export function Mens() {
     window.scrollTo(0, 0);
   }, []);
 
-  useEffect(() => {
-    api.products.facets({ gender: 'men' }).then(setFacets).catch(() => setFacets(null));
+  const loadFacets = useCallback(() => {
+    return api.products.facets({ gender: 'men' }).then(setFacets).catch(() => setFacets(null));
   }, []);
 
-  useEffect(() => {
-    api.products.list({
+  const loadProducts = useCallback(() => {
+    return api.products.list({
       gender: 'men',
       category: filter === 'all' ? undefined : filter,
       sort,
@@ -53,16 +55,35 @@ export function Mens() {
       .finally(() => setLoading(false));
   }, [filter, sort, rating, maxPrice, inStock]);
 
+  useEffect(() => {
+    void loadFacets();
+  }, [loadFacets]);
+
+  useEffect(() => {
+    void loadProducts();
+  }, [loadProducts]);
+
+  const realtimeStatus = useCatalogLiveRefresh({
+    gender: 'men',
+    onUpdate: () => {
+      void loadProducts();
+      void loadFacets();
+    },
+  });
+
   const changeFilter = (nextFilter: string) => {
     setLoading(true);
-    setFilter(nextFilter);
+    setFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
   };
 
   return (
     <div className="catalog-page">
       <header className="catalog-hero men">
         <div>
-          <span>Men's silk collection</span>
+          <div className="catalog-hero-kicker">
+            <span>Men's silk collection</span>
+            <small className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</small>
+          </div>
           <h1>Silk wear for Indian occasions</h1>
           <p>Pure silk dhotis, veshtis, shirts, and wedding sets with the same live checkout flow as sarees.</p>
           <a className="btn btn-secondary" href="https://wa.me/919876543210?text=Hi%20CSM%20Silks%2C%20I%20need%20men%27s%20silk%20help." target="_blank">
@@ -91,6 +112,7 @@ export function Mens() {
             {MEN_CATS.map(cat => (
               <button key={cat.key} className={`filter-chip ${filter === cat.key ? 'active' : ''}`} onClick={() => changeFilter(cat.key)}>
                 {cat.label}
+                {filter === cat.key && cat.key !== 'all' && <span className="filter-clear">x</span>}
               </button>
             ))}
           </div>
@@ -111,7 +133,7 @@ export function Mens() {
 
       <section className="section surface-section">
         {loading ? (
-          <div className="loading-state">Loading men's collection...</div>
+          <ProductGridSkeleton />
         ) : (
           <div className="pg">
             {products.map(product => <ProductCard key={product.id} product={product} />)}

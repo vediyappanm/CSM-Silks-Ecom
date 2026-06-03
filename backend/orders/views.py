@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import ceil
+
 from django.db.models import Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -10,10 +12,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from analytics.audit import record_admin_audit
-from .models import Order, ReturnRequest
-from .serializers import AdminOrderStatusSerializer, AdminOrderWorkflowSerializer, AdminReturnStatusSerializer, OrderCreateSerializer, OrderSerializer, ReturnCreateSerializer, ReturnSerializer
-from .services import create_order_from_cart
+from payments.services import razorpay_checkout_configured
+from .models import Coupon, Order, ReturnRequest
+from .serializers import AdminOrderStatusSerializer, AdminOrderWorkflowSerializer, AdminReturnStatusSerializer, CouponSerializer, OrderCreateSerializer, OrderSerializer, PublicOrderTrackingSerializer, ReturnCreateSerializer, ReturnSerializer
+from .services import cancel_order, confirm_paid_order, create_order_from_cart, create_return_request, update_return_status, validate_admin_workflow_action
 from shipping.models import Shipment
+from shipping.shiprocket import ShiprocketError
 from shipping.services import apply_shipment_update, create_shipping_label, record_order_status_event
 
 
@@ -24,6 +28,30 @@ def order_queryset():
         "items__product__images",
         "items__variant",
         "tracking_events",
+    )
+
+
+def paginated_response(qs, serializer_class, request, *, default_per_page: int = 20, max_per_page: int = 100):
+    try:
+        page = max(int(request.query_params.get("page", 1)), 1)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = int(request.query_params.get("per_page", default_per_page))
+    except (TypeError, ValueError):
+        per_page = default_per_page
+    per_page = min(max(per_page, 1), max_per_page)
+    total = qs.count()
+    start = (page - 1) * per_page
+    items = qs[start : start + per_page]
+    return Response(
+        {
+            "items": serializer_class(items, many=True).data,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": ceil(total / per_page) if total else 0,
+        }
     )
 
 
@@ -51,7 +79,7 @@ class OrderTrackLookupView(APIView):
         candidates = order_queryset().filter(Q(order_number__iexact=identifier) | Q(tracking_number__iexact=identifier))[:20]
         for order in candidates:
             if order_matches_phone(order, phone):
-                return Response(OrderSerializer(order).data)
+                return Response(PublicOrderTrackingSerializer(order).data)
         return Response({"detail": "No matching order found"}, status=status.HTTP_404_NOT_FOUND)
 
 
@@ -60,11 +88,13 @@ class OrderListCreateView(APIView):
 
     def get(self, request):
         orders = order_queryset().filter(user=request.user)
-        return Response({"items": OrderSerializer(orders, many=True).data, "total": orders.count(), "page": 1, "per_page": orders.count()})
+        return paginated_response(orders, OrderSerializer, request, default_per_page=20, max_per_page=50)
 
     def post(self, request):
         serializer = OrderCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("payment_method") == Order.PaymentMethod.RAZORPAY and not razorpay_checkout_configured():
+            return Response({"detail": "Razorpay credentials are not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         try:
             order = create_order_from_cart(user=request.user, **serializer.validated_data)
         except ValueError as exc:
@@ -130,11 +160,10 @@ class OrderCancelView(APIView):
 
     def post(self, request, order_id: int):
         order = get_object_or_404(Order, id=order_id, user=request.user)
-        if order.status not in {Order.Status.PENDING, Order.Status.PAYMENT_PENDING, Order.Status.CONFIRMED}:
-            return Response({"detail": f"Cannot cancel order in {order.status} status"}, status=status.HTTP_400_BAD_REQUEST)
-        order.status = Order.Status.CANCELLED
-        order.save(update_fields=["status", "updated_at"])
-        record_order_status_event(order, note="The order was cancelled before fulfillment.")
+        try:
+            cancel_order(order, actor=request.user, note="The order was cancelled before fulfillment.")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order_queryset().get(id=order.id)).data)
 
 
@@ -146,7 +175,7 @@ class AdminOrderListView(APIView):
         orders = order_queryset().all()
         if status_filter:
             orders = orders.filter(status=status_filter)
-        return Response({"items": OrderSerializer(orders[:100], many=True).data, "total": orders.count()})
+        return paginated_response(orders, OrderSerializer, request, default_per_page=50, max_per_page=100)
 
 
 class AdminOrderStatusView(APIView):
@@ -188,8 +217,16 @@ class AdminOrderWorkflowView(APIView):
         location = serializer.validated_data.get("location", "")
         provider = serializer.validated_data.get("provider", "manual")
 
+        try:
+            validate_admin_workflow_action(order, action)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         if action == "create_label":
-            shipment = create_shipping_label(order, provider=provider)
+            try:
+                shipment = create_shipping_label(order, provider=provider)
+            except ShiprocketError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
             record_admin_audit(
                 request,
                 action="order.create_label",
@@ -198,10 +235,13 @@ class AdminOrderWorkflowView(APIView):
                 metadata={"provider": shipment.provider, "awb_number": shipment.awb_number},
             )
         elif action == "confirm":
-            order.status = Order.Status.CONFIRMED
-            order.confirmed_at = order.confirmed_at or timezone.now()
-            order.save(update_fields=["status", "confirmed_at", "updated_at"])
-            record_order_status_event(order, note=note, location=location)
+            if order.payment_method == Order.PaymentMethod.RAZORPAY:
+                order = confirm_paid_order(order)
+            else:
+                order.status = Order.Status.CONFIRMED
+                order.confirmed_at = order.confirmed_at or timezone.now()
+                order.save(update_fields=["status", "confirmed_at", "updated_at"])
+                record_order_status_event(order, note=note, location=location)
         elif action == "quality_check":
             order.status = Order.Status.QUALITY_CHECK
             order.save(update_fields=["status", "updated_at"])
@@ -211,13 +251,17 @@ class AdminOrderWorkflowView(APIView):
             order.save(update_fields=["status", "updated_at"])
             record_order_status_event(order, note=note or "Order packed and ready for courier.", location=location)
         elif action == "cancel":
-            order.status = Order.Status.CANCELLED
-            order.save(update_fields=["status", "updated_at"])
-            record_order_status_event(order, note=note or "Order cancelled by admin.", location=location)
+            try:
+                cancel_order(order, actor=request.user, note=note or "Order cancelled by admin.", location=location)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         else:
             shipment = getattr(order, "shipment", None)
             if not shipment:
-                shipment = create_shipping_label(order, provider=provider)
+                try:
+                    shipment = create_shipping_label(order, provider=provider)
+                except ShiprocketError as exc:
+                    return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
             shipment_status = {
                 "pickup": Shipment.Status.PICKED_UP,
                 "in_transit": Shipment.Status.IN_TRANSIT,
@@ -264,15 +308,15 @@ class ReturnListCreateView(APIView):
         serializer = ReturnCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         order = get_object_or_404(Order, id=serializer.validated_data["order_id"], user=request.user)
-        ret = ReturnRequest.objects.create(
-            order=order,
-            user=request.user,
-            reason=serializer.validated_data["reason"],
-            details=serializer.validated_data.get("details", ""),
-        )
-        order.status = Order.Status.RETURN_INITIATED
-        order.save(update_fields=["status", "updated_at"])
-        record_order_status_event(order, note="Return request raised from customer orders page.")
+        try:
+            ret = create_return_request(
+                order=order,
+                user=request.user,
+                reason=serializer.validated_data["reason"],
+                details=serializer.validated_data.get("details", ""),
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(ReturnSerializer(ret).data, status=status.HTTP_201_CREATED)
 
 
@@ -291,20 +335,10 @@ class AdminReturnDetailView(APIView):
         ret = get_object_or_404(ReturnRequest.objects.select_related("order", "user"), id=return_id)
         serializer = AdminReturnStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        ret.status = serializer.validated_data["status"]
-        ret.save(update_fields=["status", "updated_at"])
-        if ret.status == ReturnRequest.Status.REFUNDED:
-            ret.order.status = Order.Status.REFUNDED
-            ret.order.save(update_fields=["status", "updated_at"])
-            record_order_status_event(ret.order, note="Refund has been recorded by admin.")
-        elif ret.status == ReturnRequest.Status.APPROVED:
-            ret.order.status = Order.Status.RETURN_INITIATED
-            ret.order.save(update_fields=["status", "updated_at"])
-            record_order_status_event(ret.order, note="Return request approved by admin.")
-        elif ret.status == ReturnRequest.Status.REJECTED and ret.order.status == Order.Status.RETURN_INITIATED:
-            ret.order.status = Order.Status.DELIVERED
-            ret.order.save(update_fields=["status", "updated_at"])
-            record_order_status_event(ret.order, note="Return request rejected; order remains delivered.")
+        try:
+            ret = update_return_status(ret, next_status=serializer.validated_data["status"], actor=request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         record_admin_audit(
             request,
             action="return.status_update",
@@ -313,3 +347,42 @@ class AdminReturnDetailView(APIView):
             metadata={"order_id": ret.order_id, "status": ret.status},
         )
         return Response(ReturnSerializer(ret).data)
+
+
+class AdminCouponListCreateView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        coupons = Coupon.objects.order_by("code")
+        return Response(CouponSerializer(coupons, many=True).data)
+
+    def post(self, request):
+        serializer = CouponSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        coupon = serializer.save()
+        record_admin_audit(
+            request,
+            action="coupon.create",
+            entity=coupon,
+            summary=f"Coupon {coupon.code} created.",
+            metadata={"discount_type": coupon.discount_type, "value": str(coupon.value)},
+        )
+        return Response(CouponSerializer(coupon).data, status=status.HTTP_201_CREATED)
+
+
+class AdminCouponDetailView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, coupon_id: int):
+        coupon = get_object_or_404(Coupon, id=coupon_id)
+        serializer = CouponSerializer(coupon, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        coupon = serializer.save()
+        record_admin_audit(
+            request,
+            action="coupon.update",
+            entity=coupon,
+            summary=f"Coupon {coupon.code} updated.",
+            metadata={"is_active": coupon.is_active},
+        )
+        return Response(CouponSerializer(coupon).data)

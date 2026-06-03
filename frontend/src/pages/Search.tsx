@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
+import { ProductGridSkeleton } from '@/ui/components';
 import type { CatalogFacets, Product } from '@/types';
 
 export function Search() {
@@ -16,6 +17,7 @@ export function Search() {
   const [rating, setRating] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [inStock, setInStock] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.products.facets().then(setFacets).catch(() => setFacets(null));
@@ -23,6 +25,7 @@ export function Search() {
 
   useEffect(() => {
     const id = window.setTimeout(() => {
+      setLoading(true);
       api.products.search({
         q: query.trim() || undefined,
         sort,
@@ -32,7 +35,8 @@ export function Search() {
         per_page: 48,
       })
         .then(data => setResults(data.items))
-        .catch(() => setResults([]));
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
     }, 180);
     return () => window.clearTimeout(id);
   }, [query, sort, rating, maxPrice, inStock]);
@@ -58,6 +62,7 @@ export function Search() {
         <div className="search-top">
           <button className="back-btn" onClick={() => navigate('/')} aria-label="Back home">
             <ArrowLeft size={20} />
+            <span className="back-btn-label">Home</span>
           </button>
           <div>
             <span>Store search</span>
@@ -65,7 +70,7 @@ export function Search() {
           </div>
         </div>
 
-        <div className="search-box">
+        <form className="search-box" onSubmit={(event) => { event.preventDefault(); runSearch(query); }}>
           <SearchIcon size={20} />
           <input
             value={query}
@@ -73,8 +78,8 @@ export function Search() {
             placeholder="Search sarees, silk shirts, dhotis..."
             autoFocus
           />
-          <button onClick={() => runSearch(query)}>Search</button>
-        </div>
+          <button type="submit">Search</button>
+        </form>
 
         <div className="quick-chips">
           {chips.map((chip) => (
@@ -98,9 +103,13 @@ export function Search() {
           onMaxPrice={setMaxPrice}
         />
 
-        <div className="pg">
-          {results.map(product => <ProductCard key={product.id} product={product} />)}
-        </div>
+        {loading ? (
+          <ProductGridSkeleton />
+        ) : (
+          <div className="pg">
+            {results.map(product => <ProductCard key={product.id} product={product} />)}
+          </div>
+        )}
       </div>
     </div>
   );

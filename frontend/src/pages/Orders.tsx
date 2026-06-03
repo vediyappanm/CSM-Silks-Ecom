@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Clock3, MapPin, PackageOpen, RefreshCw, Route, Star } from 'lucide-react';
 import { api } from '@/lib/api';
+import { CUSTOMER_STATUS_CLASS, ORDER_STATUS_LABEL, formatDateTime, lifecycleProgress, trackingSummary } from '@/lib/orderLifecycle';
+import { connectOrderRealtime, type RealtimeStatus } from '@/lib/realtime';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
-import type { Order } from '@/types';
+import type { Order, PaginatedResponse } from '@/types';
 
 type RazorpayOptions = {
   key: string;
@@ -49,21 +52,79 @@ function loadRazorpayScript() {
   });
 }
 
+const ORDER_PAGE_SIZE = 10;
+type OrderPageInfo = Pick<PaginatedResponse<Order>, 'total' | 'page' | 'per_page' | 'pages'>;
+
 export function Orders() {
   const navigate = useNavigate();
   const { showToast, isAuthed } = useApp();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [reviewTarget, setReviewTarget] = useState<{ order: Order; productSlug: string; productName: string } | null>(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewTitle, setReviewTitle] = useState('');
+  const [reviewBody, setReviewBody] = useState('');
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
+  const [pageInfo, setPageInfo] = useState<OrderPageInfo>({ total: 0, page: 1, per_page: ORDER_PAGE_SIZE, pages: 0 });
+  const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
-  useEffect(() => {
-    if (!isAuthed) return;
-    api.orders.list()
-      .then(data => setOrders(data.items))
-      .catch(() => setOrders([]));
+  const loadOrdersPage = useCallback(async (page = 1, append = false, withSpinner = false) => {
+    if (!isAuthed) {
+      setOrders([]);
+      setPageInfo({ total: 0, page: 1, per_page: ORDER_PAGE_SIZE, pages: 0 });
+      setLoading(false);
+      return;
+    }
+    if (withSpinner) setLoading(true);
+    if (append) setLoadingMore(true);
+    try {
+      const data = await api.orders.list({ page, per_page: ORDER_PAGE_SIZE });
+      setPageInfo({ total: data.total, page: data.page, per_page: data.per_page, pages: data.pages || 0 });
+      setOrders(prev => {
+        if (!append) return data.items;
+        const known = new Set(prev.map(order => order.id));
+        return [...prev, ...data.items.filter(order => !known.has(order.id))];
+      });
+    } catch {
+      if (!append) setOrders([]);
+    } finally {
+      if (withSpinner) setLoading(false);
+      if (append) setLoadingMore(false);
+    }
   }, [isAuthed]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadOrdersPage(1, false, true));
+    if (!isAuthed) return undefined;
+    const timer = window.setInterval(() => void loadOrdersPage(1, false), 120000);
+    return () => window.clearInterval(timer);
+  }, [isAuthed, loadOrdersPage]);
+
+  useEffect(() => {
+    if (!isAuthed) {
+      void Promise.resolve().then(() => setRealtimeStatus('unavailable'));
+      return undefined;
+    }
+    return connectOrderRealtime('/ws/orders/', {
+      onStatus: setRealtimeStatus,
+      onMessage: message => {
+        if (message.type !== 'order.update' || !message.order) return;
+        setOrders(prev => {
+          const exists = prev.some(order => order.id === message.order?.id);
+          if (!exists) return [message.order as Order, ...prev];
+          return prev.map(order => order.id === message.order?.id ? message.order as Order : order);
+        });
+        if (message.event) {
+          showToast('LIVE', message.event.title, message.event.description || `${message.order.order_number} updated`);
+        }
+      },
+    });
+  }, [isAuthed, showToast]);
 
   const cancelOrder = async (order: Order) => {
     try {
@@ -88,38 +149,32 @@ export function Orders() {
   const retryPayment = async (order: Order) => {
     try {
       const rz = await api.payments.createRazorpayOrder(order.id);
-      if (rz.key) {
-        const loaded = await loadRazorpayScript();
-        if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout');
-        const RazorpayCtor = window.Razorpay as unknown as new (options: RazorpayOptions) => { open: () => void };
-        await new Promise<void>((resolve, reject) => {
-          new RazorpayCtor({
-            key: rz.key || '',
-            amount: rz.amount,
-            currency: rz.currency,
-            name: 'CSM Silks',
-            description: order.order_number,
-            order_id: rz.razorpay_order_id,
-            prefill: { name: 'CSM Customer', contact: '' },
-            handler: async (response) => {
-              try {
-                await api.payments.verify(response);
-                resolve();
-              } catch (err) {
-                reject(err);
-              }
-            },
-            modal: { ondismiss: () => reject(new Error('Payment was not completed')) },
-            theme: { color: '#b9842e' },
-          }).open();
-        });
-      } else {
-        await api.payments.verify({
-          razorpay_order_id: rz.razorpay_order_id,
-          razorpay_payment_id: `pay_retry_${Date.now()}`,
-          razorpay_signature: 'dev',
-        });
-      }
+      const razorpayKey = rz.key;
+      if (!razorpayKey) throw new Error('Razorpay checkout is not configured. Please contact CSM Silks support.');
+      const loaded = await loadRazorpayScript();
+      if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout');
+      const RazorpayCtor = window.Razorpay as unknown as new (options: RazorpayOptions) => { open: () => void };
+      await new Promise<void>((resolve, reject) => {
+        new RazorpayCtor({
+          key: razorpayKey,
+          amount: rz.amount,
+          currency: rz.currency,
+          name: 'CSM Silks',
+          description: order.order_number,
+          order_id: rz.razorpay_order_id,
+          prefill: { name: 'CSM Customer', contact: '' },
+          handler: async (response) => {
+            try {
+              await api.payments.verify(response);
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          },
+          modal: { ondismiss: () => reject(new Error('Payment was not completed')) },
+          theme: { color: '#b9842e' },
+        }).open();
+      });
       const refreshed = await api.orders.get(order.id);
       setOrders(prev => prev.map(item => item.id === refreshed.id ? refreshed : item));
       showToast('OK', 'Payment confirmed', `${order.order_number} is confirmed`);
@@ -137,39 +192,39 @@ export function Orders() {
     }
   };
 
-  const statusClass: Record<string, string> = {
-    packed: 'os-processing',
-    shipped: 'os-shipped',
-    out_for_delivery: 'os-shipped',
-    delivered: 'os-delivered',
-    confirmed: 'os-processing',
-    quality_check: 'os-processing',
-    return_initiated: 'os-pending',
-    returned: 'os-pending',
-    refunded: 'os-delivered',
-    delivery_failed: 'os-pending',
-    rto_initiated: 'os-pending',
-    rto_delivered: 'os-pending',
-    payment_pending: 'os-pending',
-    pending: 'os-pending',
-    cancelled: 'os-pending',
+  const openReview = (order: Order) => {
+    const first = order.items?.[0];
+    const productSlug = first?.product?.slug;
+    if (!productSlug) {
+      showToast('!', 'Review unavailable', 'Product details are not attached to this order yet');
+      return;
+    }
+    setReviewTarget({ order, productSlug, productName: first.product_name || first.product?.name || 'CSM product' });
+    setReviewRating(5);
+    setReviewTitle('');
+    setReviewBody('');
   };
-  const statusLabel: Record<string, string> = {
-    packed: 'Packed',
-    shipped: 'Shipped',
-    out_for_delivery: 'Out for Delivery',
-    delivered: 'Delivered',
-    confirmed: 'Confirmed',
-    quality_check: 'Quality Check',
-    return_initiated: 'Return Initiated',
-    returned: 'Returned',
-    refunded: 'Refunded',
-    delivery_failed: 'Delivery Failed',
-    rto_initiated: 'Returning to Seller',
-    rto_delivered: 'Returned to Seller',
-    payment_pending: 'Payment Pending',
-    pending: 'Pending',
-    cancelled: 'Cancelled',
+
+  const submitReview = async () => {
+    if (!reviewTarget) return;
+    if (!reviewTitle.trim()) {
+      showToast('!', 'Review title required', 'Add a short title for your review');
+      return;
+    }
+    setReviewSubmitting(true);
+    try {
+      await api.products.reviews.create(reviewTarget.productSlug, {
+        rating: reviewRating,
+        title: reviewTitle.trim(),
+        body: reviewBody.trim() || 'No additional comments.',
+      });
+      showToast('OK', 'Review submitted', `Thanks for reviewing ${reviewTarget.productName}`);
+      setReviewTarget(null);
+    } catch (err) {
+      showToast('!', 'Review failed', err instanceof Error ? err.message : 'Unable to submit review');
+    } finally {
+      setReviewSubmitting(false);
+    }
   };
 
   if (!isAuthed) {
@@ -187,17 +242,38 @@ export function Orders() {
   return (
     <div className="orders-page">
       <div className="orders-wrap">
-        <h1 className="orders-title">My Orders</h1>
-        <p className="orders-sub">Track your CSM Silks orders and manage returns</p>
-        {orders.length === 0 && <div className="cart-empty">No orders yet.</div>}
+        <div className="orders-heading-row">
+          <div>
+            <h1 className="orders-title">My Orders</h1>
+            <p className="orders-sub">Track every admin and courier update from order placed to delivery</p>
+          </div>
+          <div className="orders-live-actions">
+            <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live WebSocket' : realtimeStatus}</span>
+            <button className="oc-btn oc-refresh" onClick={() => void loadOrdersPage(1, false)}>
+              <RefreshCw size={14} /> Refresh logs
+            </button>
+          </div>
+        </div>
+        {loading && <div className="order-skeleton-list">{Array.from({ length: 3 }).map((_, index) => <div key={index} className="order-skeleton" />)}</div>}
+        {!loading && orders.length === 0 && (
+          <div className="orders-empty">
+            <PackageOpen size={54} />
+            <h2>No orders yet</h2>
+            <p>Start shopping and your confirmed, shipped, delivered, and return orders will be listed here.</p>
+            <button className="btn btn-gold" onClick={() => navigate('/womens')}>Start shopping</button>
+          </div>
+        )}
         {orders.map(o => {
           const first = o.items?.[0];
           const p = first?.product;
+          const summary = trackingSummary(o);
+          const progress = lifecycleProgress(o);
+          const eventCount = o.tracking_events?.length || 0;
           return (
             <div key={o.id} className="order-card" onClick={() => navigate(`/tracking/${o.id}`)}>
               <div className="oc-header">
                 <span className="oc-id">#{o.order_number}</span>
-                <span className={`oc-status ${statusClass[o.status] || 'os-processing'}`}>{statusLabel[o.status] || o.status}</span>
+                <span className={`oc-status ${CUSTOMER_STATUS_CLASS[o.status] || 'os-processing'}`}>{ORDER_STATUS_LABEL[o.status] || o.status}</span>
               </div>
               <div className="oc-body">
                 <ProductVisual product={p} className="oc-img" />
@@ -207,19 +283,40 @@ export function Orders() {
                 </div>
                 <div className="oc-price">Rs {Number(o.total_amount).toLocaleString('en-IN')}</div>
               </div>
+              <div className="oc-trace-panel">
+                <div className="oc-trace-head">
+                  <span><Clock3 size={14} /> Latest lifecycle log</span>
+                  <small>{formatDateTime(summary.time)}</small>
+                </div>
+                <div className="oc-trace-main">
+                  <strong>{summary.title}</strong>
+                  <span>{summary.description}</span>
+                  {summary.location && <em><MapPin size={12} /> {summary.location}</em>}
+                </div>
+                <div className="order-progress" aria-label="Order lifecycle progress">
+                  {progress.map(stage => (
+                    <div key={stage.key} className={`order-progress-step ${stage.state}`}>
+                      <span />
+                      <b>{stage.label}</b>
+                    </div>
+                  ))}
+                </div>
+                <div className="oc-trace-foot">
+                  <span>{o.tracking_number ? `AWB ${o.tracking_number}` : 'AWB will appear after admin creates label'}</span>
+                  <span>{eventCount} realtime log{eventCount === 1 ? '' : 's'}</span>
+                </div>
+              </div>
               <div className="oc-actions">
-                {['shipped', 'out_for_delivery', 'delivered', 'delivery_failed', 'rto_initiated', 'rto_delivered'].includes(o.status) && (
-                  <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }}>
-                    Track Order
-                  </button>
-                )}
+                <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }}>
+                  <Route size={14} /> Track lifecycle
+                </button>
                 {o.status === 'payment_pending' && (
                   <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); void retryPayment(o); }}>
                     Retry Payment
                   </button>
                 )}
                 {o.status === 'delivered' && (
-                  <button className="oc-btn oc-btn-review" onClick={(e) => { e.stopPropagation(); showToast('OK', 'Rate & Review', 'Thanks for your feedback'); }}>
+                  <button className="oc-btn oc-btn-review" onClick={(e) => { e.stopPropagation(); openReview(o); }}>
                     Review
                   </button>
                 )}
@@ -240,7 +337,49 @@ export function Orders() {
             </div>
           );
         })}
+        {pageInfo.page < (pageInfo.pages || 0) && (
+          <div className="orders-load-more">
+            <span>Showing {orders.length} of {pageInfo.total} orders</span>
+            <button className="oc-btn oc-refresh" onClick={() => void loadOrdersPage(pageInfo.page + 1, true)} disabled={loadingMore}>
+              <RefreshCw size={14} /> {loadingMore ? 'Loading...' : 'Load more orders'}
+            </button>
+          </div>
+        )}
       </div>
+      {reviewTarget && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setReviewTarget(null)}>
+          <div className="review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title" onMouseDown={event => event.stopPropagation()}>
+            <div className="review-modal-head">
+              <div>
+                <span>Verified purchase</span>
+                <h2 id="review-title">Review {reviewTarget.productName}</h2>
+              </div>
+              <button type="button" onClick={() => setReviewTarget(null)} aria-label="Close review form">x</button>
+            </div>
+            <div className="review-stars" aria-label="Rating">
+              {Array.from({ length: 5 }).map((_, index) => {
+                const value = index + 1;
+                return (
+                  <button key={value} type="button" className={value <= reviewRating ? 'on' : ''} onClick={() => setReviewRating(value)} aria-label={`${value} star${value === 1 ? '' : 's'}`}>
+                    <Star size={22} fill="currentColor" />
+                  </button>
+                );
+              })}
+            </div>
+            <div className="form-field">
+              <label>Review title *</label>
+              <input value={reviewTitle} onChange={event => setReviewTitle(event.target.value)} placeholder="Beautiful silk and fast delivery" />
+            </div>
+            <div className="form-field">
+              <label>Review details</label>
+              <textarea value={reviewBody} onChange={event => setReviewBody(event.target.value)} rows={4} placeholder="Tell other customers about fabric, zari, color, packing, and fit." />
+            </div>
+            <button className="btn btn-gold review-submit" type="button" onClick={() => void submitReview()} disabled={reviewSubmitting}>
+              {reviewSubmitting ? 'Submitting...' : 'Submit review'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

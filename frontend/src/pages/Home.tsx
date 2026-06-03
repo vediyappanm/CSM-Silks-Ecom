@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { ArrowRight, BadgeCheck, CreditCard, MessageCircle, PackageCheck, Search, ShieldCheck, Truck } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { ArrowRight, BadgeCheck, CreditCard, MessageCircle, PackageCheck, Search, ShieldCheck, ShoppingBag, Star, Truck, UserRound } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { ProductVisual, SectionHeader } from '@/ui/components';
 import { api } from '@/lib/api';
+import { useApp } from '@/store/AppContext';
 import type { Product } from '@/types';
 
 const collectionTiles = [
@@ -20,10 +21,21 @@ const trustItems = [
   { icon: CreditCard, title: 'Razorpay or COD', text: 'Secure prepaid checkout or cash on delivery.' },
 ];
 
+function productPath(product?: Product) {
+  if (!product) return '/womens';
+  return `/product/${product.gender === 'men' ? 'mens' : 'womens'}/${product.slug}`;
+}
+
+function formatINR(value?: number) {
+  return `Rs ${Number(value || 0).toLocaleString('en-IN')}`;
+}
+
 export function Home() {
   const navigate = useNavigate();
+  const { addToCart, isAuthed } = useApp();
   const [womens, setWomens] = useState<Product[]>([]);
   const [mens, setMens] = useState<Product[]>([]);
+  const [heroQuery, setHeroQuery] = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -39,17 +51,47 @@ export function Home() {
   }, []);
 
   const heroProduct = womens[0] || mens[0];
+  const liveCount = womens.length + mens.length;
+  const stockCount = Number(heroProduct?.available_qty || 0);
+  const discount = heroProduct?.mrp && heroProduct.mrp > heroProduct.price
+    ? Math.max(0, Math.round((1 - heroProduct.price / heroProduct.mrp) * 100))
+    : 0;
+  const rating = Number(heroProduct?.avg_rating || 0);
+
+  const submitHeroSearch = (event: FormEvent) => {
+    event.preventDefault();
+    const query = heroQuery.trim();
+    navigate(query ? `/search?q=${encodeURIComponent(query)}` : '/search');
+  };
+
+  const addFeaturedToCart = async () => {
+    if (!heroProduct) {
+      navigate('/womens');
+      return;
+    }
+    await addToCart(heroProduct);
+  };
 
   return (
     <div className="storefront">
       <section className="hero">
         <div className="hero-content">
           <div className="hero-copy">
-            <h1>CSM Silks online store</h1>
+            <h1>Pure silk shopping, from product to delivery.</h1>
             <p className="hero-lede">
-              Shop pure Kanjivaram sarees and men's silk wear with live stock, GST invoices,
-              secure checkout, and order tracking.
+              Browse real CSM Silks inventory with product photos, GST invoices, OTP-secured
+              checkout, Razorpay/COD payments, and shipment tracking.
             </p>
+            <form className="hero-search" onSubmit={submitHeroSearch} role="search">
+              <Search size={18} />
+              <input
+                value={heroQuery}
+                onChange={event => setHeroQuery(event.target.value)}
+                placeholder="Search sarees, dhotis, silk shirts, festive colors"
+                aria-label="Search CSM Silks products"
+              />
+              <button type="submit">Search</button>
+            </form>
             <div className="hero-actions">
               <button className="btn btn-primary" onClick={() => navigate('/womens')}>
                 Shop women <ArrowRight size={17} />
@@ -57,10 +99,10 @@ export function Home() {
               <button className="btn btn-secondary" onClick={() => navigate('/mens')}>
                 Shop men
               </button>
-            </div>
-            <div className="hero-search" onClick={() => navigate('/search')}>
-              <Search size={18} />
-              <span>Search sarees, dhotis, silk shirts, festive colors</span>
+              <button className="btn btn-ghost hero-account-action" onClick={() => navigate(isAuthed ? '/account' : '/signup')}>
+                <UserRound size={17} />
+                {isAuthed ? 'My account' : 'Create account'}
+              </button>
             </div>
             <div className="hero-market-row">
               {collectionTiles.map((tile) => (
@@ -75,24 +117,53 @@ export function Home() {
           <div className="hero-showcase">
             <div className="hero-showcase-card">
               <div className="hero-showcase-top">
-                <span>Featured textile</span>
+                <span>Live featured pick</span>
                 <BadgeCheck size={18} />
               </div>
-              <ProductVisual product={heroProduct} className="hero-visual" />
+              <button className="hero-image-button" type="button" onClick={() => navigate(productPath(heroProduct))}>
+                <ProductVisual product={heroProduct} className="hero-visual hero-product-image" />
+              </button>
               <div className="hero-showcase-info">
                 <div>
-                  <strong>{heroProduct?.name || 'Royal Kanjivaram Silk Saree'}</strong>
-                  <span>{heroProduct?.cat || 'Pure silk collection'}</span>
+                  <strong>{heroProduct?.name || 'Catalog waiting for live products'}</strong>
+                  <span>
+                    {heroProduct
+                      ? `${heroProduct.cat || 'CSM catalog'} - ${stockCount > 0 ? `${stockCount} in stock` : 'Stock pending'}`
+                      : 'No published API product returned yet'}
+                  </span>
                 </div>
-                <button onClick={() => navigate(heroProduct ? `/product/${heroProduct.gender === 'men' ? 'mens' : 'womens'}/${heroProduct.slug}` : '/womens')}>
-                  View
+                <div className="hero-price-stack">
+                  {heroProduct && <strong>{formatINR(heroProduct.price)}</strong>}
+                  {heroProduct?.mrp && heroProduct.mrp > heroProduct.price && <span>{formatINR(heroProduct.mrp)}</span>}
+                </div>
+              </div>
+              {heroProduct ? (
+                <div className="hero-product-proof">
+                  <span><Star size={14} fill="currentColor" /> {rating ? rating.toFixed(1) : 'New'} rating</span>
+                  <span>{discount > 0 ? `${discount}% off` : 'Assured stock'}</span>
+                  <span>Delivery {heroProduct.delivery_min_days || 2}-{heroProduct.delivery_max_days || 6} days</span>
+                </div>
+              ) : (
+                <div className="hero-product-proof">
+                  <span>Connect catalog API</span>
+                  <span>Publish products in admin</span>
+                  <span>Customer card stays empty until live data arrives</span>
+                </div>
+              )}
+              <div className="hero-showcase-actions">
+                <button type="button" onClick={() => void addFeaturedToCart()} disabled={!heroProduct}>
+                  <ShoppingBag size={17} />
+                  Add to cart
+                </button>
+                <button type="button" className="secondary" onClick={() => navigate(productPath(heroProduct))}>
+                  {heroProduct ? 'View details' : 'Open catalog'}
                 </button>
               </div>
             </div>
             <div className="hero-mini-panel">
               <span>Today at CSM</span>
-              <strong>{womens.length + mens.length || 10} live picks</strong>
-              <p>Fresh silk picks ready for cart, checkout, and doorstep delivery.</p>
+              <strong>{liveCount} live picks</strong>
+              <p>Cart, checkout, payments, order tracking, and delivery updates are connected.</p>
             </div>
           </div>
         </div>

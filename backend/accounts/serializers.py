@@ -38,11 +38,16 @@ class UserSerializer(serializers.ModelSerializer):
 
 class OTPRequestSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
+    email = serializers.EmailField(required=False, allow_blank=True)
 
 
 class OTPVerifySerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
     otp = serializers.CharField(max_length=6)
+    full_name = serializers.CharField(max_length=120, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    wa_opted_in = serializers.BooleanField(required=False)
+    push_opted_in = serializers.BooleanField(required=False)
 
 
 class AdminLoginSerializer(serializers.Serializer):
@@ -61,6 +66,8 @@ class TokenResponseSerializer(serializers.Serializer):
 
 
 class AddressSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     address_line_1 = serializers.CharField(required=False)
     address_line_2 = serializers.CharField(required=False, allow_blank=True)
     address_line1 = serializers.CharField(source="address_line_1", required=False)
@@ -74,6 +81,9 @@ class AddressSerializer(serializers.ModelSerializer):
             "id",
             "label",
             "full_name",
+            "first_name",
+            "last_name",
+            "email",
             "phone",
             "address_line_1",
             "address_line_2",
@@ -92,6 +102,12 @@ class AddressSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         errors = {}
+        first_name = attrs.pop("first_name", "").strip()
+        last_name = attrs.pop("last_name", "").strip()
+        if not attrs.get("full_name") and (first_name or last_name):
+            attrs["full_name"] = f"{first_name} {last_name}".strip()
+        if not attrs.get("full_name") and not getattr(self.instance, "full_name", ""):
+            errors["full_name"] = ["This field is required."]
         if not attrs.get("address_line_1") and not getattr(self.instance, "address_line_1", ""):
             errors["address_line_1"] = ["This field is required."]
         if not attrs.get("pin_code") and not getattr(self.instance, "pin_code", ""):

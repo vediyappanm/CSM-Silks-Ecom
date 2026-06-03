@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
-import type { Address, PaymentMethod } from '@/types';
+import type { Address } from '@/types';
+
+type CheckoutPaymentMethod = 'razorpay' | 'cod';
 
 type CheckoutForm = {
   first_name: string;
@@ -28,6 +31,50 @@ const initialCheckoutForm: CheckoutForm = {
   pin_code: '',
   email: '',
 };
+
+const INDIAN_STATES = [
+  'Andaman and Nicobar Islands',
+  'Andhra Pradesh',
+  'Arunachal Pradesh',
+  'Assam',
+  'Bihar',
+  'Chandigarh',
+  'Chhattisgarh',
+  'Dadra and Nagar Haveli and Daman and Diu',
+  'Delhi',
+  'Goa',
+  'Gujarat',
+  'Haryana',
+  'Himachal Pradesh',
+  'Jammu and Kashmir',
+  'Jharkhand',
+  'Karnataka',
+  'Kerala',
+  'Ladakh',
+  'Lakshadweep',
+  'Madhya Pradesh',
+  'Maharashtra',
+  'Manipur',
+  'Meghalaya',
+  'Mizoram',
+  'Nagaland',
+  'Odisha',
+  'Puducherry',
+  'Punjab',
+  'Rajasthan',
+  'Sikkim',
+  'Tamil Nadu',
+  'Telangana',
+  'Tripura',
+  'Uttar Pradesh',
+  'Uttarakhand',
+  'West Bengal',
+];
+
+type PinLookupResponse = Array<{
+  Status?: string;
+  PostOffice?: Array<{ District?: string; State?: string }>;
+}>;
 
 type RazorpayCheckoutOptions = {
   key: string;
@@ -70,15 +117,43 @@ function loadRazorpayScript() {
 
 export function Checkout() {
   const navigate = useNavigate();
-  const { cart, getCartTotals, showToast, clearCart, isAuthed, couponCode } = useApp();
+  const { cart, getCartTotals, showToast, clearCart, isAuthed, couponCode, refreshCart } = useApp();
   const t = getCartTotals();
   const fmt = (n: number) => 'Rs ' + n.toLocaleString('en-IN');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('upi');
+  const [paymentMethod, setPaymentMethod] = useState<CheckoutPaymentMethod>('razorpay');
   const [form, setForm] = useState<CheckoutForm>(initialCheckoutForm);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<number | 'new'>('new');
   const [errors, setErrors] = useState<Partial<Record<keyof CheckoutForm, string>>>({});
   const [placing, setPlacing] = useState(false);
+  const [loyaltyBalance, setLoyaltyBalance] = useState(0);
+  const [useLoyalty, setUseLoyalty] = useState(false);
+  const [stockNotice, setStockNotice] = useState('');
+
+  const loyaltyToUse = useLoyalty ? Math.min(loyaltyBalance, Math.floor(Math.max(0, t.subtotal - t.discount))) : 0;
+  const estimatedPayable = Math.max(0, t.total - loyaltyToUse);
+  const stockIssues = cart.filter(item => item.stock_status && item.stock_status !== 'ok');
+  const hasStockIssues = stockIssues.length > 0;
+  const cartVariantIds = useMemo(() => new Set(cart.map(item => item.variant_id).filter(Boolean) as number[]), [cart]);
+  const cartProductIds = useMemo(() => new Set(cart.map(item => item.id).filter(Boolean) as number[]), [cart]);
+
+  const handleLiveStockUpdate = useCallback((message: Parameters<typeof useCatalogLiveRefresh>[0] extends { onUpdate: (msg: infer T) => void } ? T : never) => {
+    const affectedVariant = message.variant_id || message.variant?.id;
+    const affectedProduct = message.product_id || message.product?.id;
+    if ((affectedVariant && cartVariantIds.has(affectedVariant)) || (affectedProduct && cartProductIds.has(affectedProduct))) {
+      void refreshCart().then((data) => {
+        const issueCount = data?.stock_issues?.length || 0;
+        const text = issueCount ? `${issueCount} checkout item needs stock attention.` : 'Checkout stock refreshed from live inventory.';
+        setStockNotice(text);
+        showToast('LIVE', 'Checkout stock refreshed', text);
+      });
+    }
+  }, [cartProductIds, cartVariantIds, refreshCart, showToast]);
+
+  const realtimeStatus = useCatalogLiveRefresh({
+    enabled: isAuthed && cart.length > 0,
+    onUpdate: handleLiveStockUpdate,
+  });
 
   useEffect(() => {
     if (!isAuthed) return;
@@ -102,6 +177,39 @@ export function Checkout() {
         }
       })
       .catch(() => setAddresses([]));
+  }, [isAuthed]);
+
+  useEffect(() => {
+    const pin = form.pin_code.trim();
+    if (!/^\d{6}$/.test(pin)) return undefined;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      fetch(`https://api.postalpincode.in/pincode/${pin}`, { signal: controller.signal })
+        .then(res => res.json() as Promise<PinLookupResponse>)
+        .then(data => {
+          const match = data?.[0];
+          const office = match?.Status === 'Success' ? match.PostOffice?.[0] : null;
+          if (!office?.District || !office?.State) return;
+          setForm(prev => prev.pin_code === pin ? {
+            ...prev,
+            city: office.District || prev.city,
+            state: office.State || prev.state,
+          } : prev);
+          setErrors(prev => ({ ...prev, city: '', state: '' }));
+        })
+        .catch(() => null);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [form.pin_code]);
+
+  useEffect(() => {
+    if (!isAuthed) return;
+    api.loyalty.balance()
+      .then(balance => setLoyaltyBalance(Number(balance.points || 0)))
+      .catch(() => setLoyaltyBalance(0));
   }, [isAuthed]);
 
   const selectedAddress = useMemo(() => {
@@ -128,12 +236,17 @@ export function Checkout() {
 
   const handlePlaceOrder = async () => {
     if (!isAuthed) {
-      showToast('!', 'Sign in required', 'Please login with OTP from the account page before checkout');
-      navigate('/account');
+      showToast('!', 'Sign in required', 'Please login or create an account before checkout');
+      navigate('/login?next=/checkout');
       return;
     }
     if (cart.length === 0) {
       showToast('!', 'Empty Cart', 'Add items to cart first');
+      return;
+    }
+    const refreshedCart = await refreshCart();
+    if (refreshedCart?.has_stock_issues) {
+      showToast('!', 'Stock changed', refreshedCart.stock_issues?.[0]?.message || 'Please review cart stock before checkout');
       return;
     }
     if (!validateForm()) {
@@ -150,6 +263,7 @@ export function Checkout() {
         city: form.city.trim(),
         state: form.state.trim(),
         pin_code: form.pin_code.trim(),
+        email: form.email.trim(),
         country: 'India',
         is_default: addresses.length === 0,
         label: 'Home',
@@ -157,49 +271,44 @@ export function Checkout() {
       const order = await api.orders.create({
         address_id: address.id!,
         coupon_code: couponCode,
+        loyalty_points_to_use: loyaltyToUse,
         payment_method: paymentMethod === 'cod' ? 'cod' : 'razorpay',
       });
       if (paymentMethod !== 'cod') {
         const rz = await api.payments.createRazorpayOrder(order.id);
-        if (rz.key) {
-          const loaded = await loadRazorpayScript();
-          if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout. Please try COD or refresh.');
-          const RazorpayCtor = window.Razorpay;
-          await new Promise<void>((resolve, reject) => {
-            const checkout = new RazorpayCtor({
-              key: rz.key || '',
-              amount: rz.amount,
-              currency: rz.currency,
-              name: 'CSM Silks',
-              description: order.order_number,
-              order_id: rz.razorpay_order_id,
-              prefill: {
-                name: `${form.first_name} ${form.last_name}`.trim(),
-                contact: form.phone,
-                email: form.email || undefined,
-              },
-              handler: async (response) => {
-                try {
-                  await api.payments.verify(response);
-                  resolve();
-                } catch (err) {
-                  reject(err);
-                }
-              },
-              modal: {
-                ondismiss: () => reject(new Error('Payment was not completed')),
-              },
-              theme: { color: '#b9842e' },
-            });
-            checkout.open();
+        const razorpayKey = rz.key;
+        if (!razorpayKey) throw new Error('Razorpay checkout is not configured. Please choose COD or contact CSM Silks support.');
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) throw new Error('Unable to load Razorpay checkout. Please try COD or refresh.');
+        const RazorpayCtor = window.Razorpay;
+        await new Promise<void>((resolve, reject) => {
+          const checkout = new RazorpayCtor({
+            key: razorpayKey,
+            amount: rz.amount,
+            currency: rz.currency,
+            name: 'CSM Silks',
+            description: order.order_number,
+            order_id: rz.razorpay_order_id,
+            prefill: {
+              name: `${form.first_name} ${form.last_name}`.trim(),
+              contact: form.phone,
+              email: form.email || undefined,
+            },
+            handler: async (response) => {
+              try {
+                await api.payments.verify(response);
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
+            },
+            modal: {
+              ondismiss: () => reject(new Error('Payment was not completed')),
+            },
+            theme: { color: '#b9842e' },
           });
-        } else {
-          await api.payments.verify({
-            razorpay_order_id: rz.razorpay_order_id,
-            razorpay_payment_id: `pay_dev_${Date.now()}`,
-            razorpay_signature: 'dev',
-          });
-        }
+          checkout.open();
+        });
       }
       showToast('OK', 'Order Placed', `${order.order_number} confirmed for ${fmt(Number(order.total_amount))}`);
       await clearCart();
@@ -229,6 +338,15 @@ export function Checkout() {
         <div>
           <h1 className="checkout-title">Secure Checkout</h1>
           <p className="checkout-sub">Confirm delivery, choose Razorpay or COD, and place a real CSM Silks order.</p>
+          <div className="checkout-live-row">
+            <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</span>
+            {stockNotice && <small>{stockNotice}</small>}
+          </div>
+          {hasStockIssues && (
+            <div className="cart-stock-alert checkout-alert">
+              {stockIssues[0].stock_message || 'One or more checkout items need stock attention before placing order.'}
+            </div>
+          )}
 
           <div className="checkout-card">
             <div className="checkout-card-title"><div className="cct-step">1</div>Delivery Address</div>
@@ -270,7 +388,14 @@ export function Checkout() {
             <div className="form-field"><label>Address Line 2</label><input placeholder="Area, Landmark" value={form.address_line_2} onChange={e => updateField('address_line_2', e.target.value)} /></div>
             <div className="form-row">
               <div className="form-field"><label>City *</label><input placeholder="Chennai" value={form.city} onChange={e => updateField('city', e.target.value)} />{errors.city && <span>{errors.city}</span>}</div>
-              <div className="form-field"><label>State *</label><input placeholder="Tamil Nadu" value={form.state} onChange={e => updateField('state', e.target.value)} />{errors.state && <span>{errors.state}</span>}</div>
+              <div className="form-field">
+                <label>State *</label>
+                <select value={form.state} onChange={e => updateField('state', e.target.value)}>
+                  <option value="">Select state</option>
+                  {INDIAN_STATES.map(state => <option key={state} value={state}>{state}</option>)}
+                </select>
+                {errors.state && <span>{errors.state}</span>}
+              </div>
             </div>
             <div className="form-row">
               <div className="form-field"><label>PIN Code *</label><input placeholder="600001" value={form.pin_code} onChange={e => updateField('pin_code', e.target.value.replace(/\D/g, '').slice(0, 6))} />{errors.pin_code && <span>{errors.pin_code}</span>}</div>
@@ -280,32 +405,44 @@ export function Checkout() {
 
           <div className="checkout-card">
             <div className="checkout-card-title"><div className="cct-step">2</div>Payment Method</div>
+            {loyaltyBalance > 0 && (
+              <label className={`loyalty-toggle ${useLoyalty ? 'on' : ''}`}>
+                <input type="checkbox" checked={useLoyalty} onChange={event => setUseLoyalty(event.target.checked)} />
+                <span>
+                  <strong>Use loyalty points</strong>
+                  <small>{loyaltyBalance.toLocaleString('en-IN')} points available. Redeem Rs {loyaltyToUse.toLocaleString('en-IN')} on this order.</small>
+                </span>
+              </label>
+            )}
             <div className="payment-opts">
               {[
-                { key: 'upi' as const, icon: 'UPI', label: 'UPI' },
-                { key: 'card' as const, icon: 'Card', label: 'Card' },
-                { key: 'netbank' as const, icon: 'Bank', label: 'Net Banking' },
-                { key: 'cod' as const, icon: 'COD', label: 'Cash on Delivery' },
+                { key: 'razorpay' as const, icon: 'Pay', label: 'Pay Online', sub: 'UPI, cards, wallets, netbanking' },
+                { key: 'cod' as const, icon: 'COD', label: 'Cash on Delivery', sub: 'Pay at your doorstep' },
               ].map(pm => (
-                <div
+                <button
+                  type="button"
                   key={pm.key}
                   className={`po ${paymentMethod === pm.key ? 'on' : ''}`}
+                  aria-pressed={paymentMethod === pm.key}
                   onClick={() => setPaymentMethod(pm.key)}
                 >
                   <div className="po-ic">{pm.icon}</div>
-                  <div className="po-lbl">{pm.label}</div>
-                </div>
+                  <div>
+                    <div className="po-lbl">{pm.label}</div>
+                    <div className="po-sub">{pm.sub}</div>
+                  </div>
+                </button>
               ))}
             </div>
             {paymentMethod === 'cod' && (
-              <div style={{ padding: 14, background: 'rgba(26,122,74,.08)', border: '1px solid rgba(26,122,74,.2)', borderRadius: 9, fontSize: 12, color: 'rgba(13,11,8,.6)' }}>
+              <div className="cod-note">
                 COD orders are confirmed immediately. Loyalty points are credited after checkout in this v1 flow.
               </div>
             )}
           </div>
 
-          <button className="place-btn" onClick={() => void handlePlaceOrder()} disabled={placing}>
-            {placing ? 'Placing order...' : `Place Order - ${fmt(t.total)}`}
+          <button className="place-btn" onClick={() => void handlePlaceOrder()} disabled={placing || hasStockIssues}>
+            {hasStockIssues ? 'Review cart stock first' : placing ? 'Placing order...' : `Place Order - ${fmt(estimatedPayable)}`}
           </button>
         </div>
 
@@ -313,21 +450,22 @@ export function Checkout() {
           <div className="order-summary">
             <div className="os-title">Order Review</div>
             {cart.map(p => (
-              <div key={`${p.id}-${p.variant_id}`} style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+              <div key={`${p.id}-${p.variant_id}`} className="summary-line">
                 <ProductVisual product={p} className="summary-visual" />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--cream)' }}>{p.name}</div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)' }}>Qty: {p.qty}</div>
+                <div className="summary-copy">
+                  <div className="summary-name">{p.name}</div>
+                  <div className="summary-meta">Qty: {p.qty} / {p.stock_message || 'Live stock verified'}</div>
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold2)' }}>{fmt(p.price * p.qty)}</div>
+                <div className="summary-price">{fmt(p.price * p.qty)}</div>
               </div>
             ))}
-            <div style={{ height: 1, background: 'rgba(255,255,255,.08)', margin: '14px 0' }} />
+            <div className="summary-divider" />
             <div className="os-row"><span>Subtotal</span><span className="os-val">{fmt(t.subtotal)}</span></div>
             {t.discount > 0 && <div className="os-row"><span>Discount {couponCode ? `(${couponCode})` : ''}</span><span className="os-val free">- {fmt(t.discount)}</span></div>}
+            {loyaltyToUse > 0 && <div className="os-row"><span>Loyalty points</span><span className="os-val free">- {fmt(loyaltyToUse)}</span></div>}
             <div className="os-row"><span>Shipping</span><span className="os-val" style={{ color: t.shipping === 0 ? 'var(--grn)' : 'inherit' }}>{t.shipping === 0 ? 'Free' : fmt(t.shipping)}</span></div>
             <div className="os-row"><span>GST (5%)</span><span className="os-val">{fmt(t.cgst + t.sgst)}</span></div>
-            <div className="os-row total"><span>Total</span><span className="os-val">{fmt(t.total)}</span></div>
+            <div className="os-row total"><span>Total</span><span className="os-val">{fmt(estimatedPayable)}</span></div>
           </div>
         </div>
       </div>

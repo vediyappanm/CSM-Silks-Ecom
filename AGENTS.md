@@ -10,14 +10,15 @@
 ```bash
 python backend/manage.py migrate
 python backend/manage.py seed_csm
-python backend/manage.py runserver 0.0.0.0:8000
+cd backend
+daphne -b 0.0.0.0 -p 8000 csm_backend.asgi:application
 
-cd frontend
+cd ../frontend
 npm install
 npm run dev
 ```
 
-Frontend runs on `http://localhost:5173` and proxies `/api` to Django on `http://localhost:8000`.
+Frontend runs on `http://localhost:5173` and proxies `/api` and `/ws` to the Django ASGI app on `http://localhost:8000`.
 
 ## Commands
 | Action | Command |
@@ -37,7 +38,7 @@ Frontend runs on `http://localhost:5173` and proxies `/api` to Django on `http:/
 - Health: `GET /health` or `GET /api/health`.
 - API docs: `GET /api/docs`.
 - Auth: customer phone OTP and admin email/password.
-- Dev OTP is returned as `dev_otp` by `/api/auth/otp/send`.
+- Dev OTP is returned as `dev_otp` only when `DEBUG=True` and `OTP_DEV_FALLBACK_ENABLED=True`.
 
 ## Architecture
 ```text
@@ -69,4 +70,5 @@ frontend/
 ## Production Notes
 - Replace default secrets before deployment.
 - Configure production PostgreSQL, Redis, Razorpay, courier, WhatsApp/SMS/email credentials.
+- Keep `OTP_DEV_FALLBACK_ENABLED=False` and `PAYMENT_DEV_FALLBACK_ENABLED=False` in production.
 - Do not commit local SQLite DBs, screenshots, logs, or `.env`.

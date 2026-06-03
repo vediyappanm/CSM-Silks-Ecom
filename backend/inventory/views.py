@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from analytics.audit import record_admin_audit
 from catalog.models import ProductVariant
+from catalog.realtime import publish_product_update
 
 from .models import StockLedger, UnsoldAlert
 from .serializers import StockAdjustmentSerializer, StockLedgerSerializer, UnsoldAlertSerializer
@@ -60,6 +61,7 @@ class AdminInventoryView(APIView):
             summary=f"{variant.sku} stock adjusted by {delta}.",
             metadata={"ledger_id": ledger.id, "quantity_delta": delta, "stock_qty": variant.stock_qty},
         )
+        publish_product_update(variant.product, event_type="inventory.variant.updated", variant=variant, source="admin.inventory.adjust")
         return Response(StockLedgerSerializer(ledger).data)
 
 

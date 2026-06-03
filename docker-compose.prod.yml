@@ -1,6 +1,4 @@
 # CSM Silks — Production Docker Compose
-version: "3.9"
-
 services:
   nginx:
     image: nginx:1.27-alpine
@@ -22,13 +20,18 @@ services:
     environment:
       - APP_ENV=production
       - DEBUG=False
+      - DATABASE_URL=postgres://csm:${POSTGRES_PASSWORD:-csm_secret}@db:5432/csm_silks
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CHANNEL_LAYER_BACKEND=redis
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
-    command: sh -c "python backend/manage.py migrate --noinput && gunicorn csm_backend.wsgi:application --chdir backend --bind 0.0.0.0:8000 --workers 4"
+    command: sh -c "python backend/manage.py check --deploy && python backend/manage.py migrate --noinput && daphne -b 0.0.0.0 -p 8000 csm_backend.asgi:application"
 
   frontend:
     image: node:22-alpine
@@ -43,6 +46,12 @@ services:
     env_file: .env
     environment:
       - APP_ENV=production
+      - DEBUG=False
+      - DATABASE_URL=postgres://csm:${POSTGRES_PASSWORD:-csm_secret}@db:5432/csm_silks
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CHANNEL_LAYER_BACKEND=redis
     depends_on:
       - db
       - redis
@@ -54,6 +63,12 @@ services:
     env_file: .env
     environment:
       - APP_ENV=production
+      - DEBUG=False
+      - DATABASE_URL=postgres://csm:${POSTGRES_PASSWORD:-csm_secret}@db:5432/csm_silks
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - CHANNEL_LAYER_BACKEND=redis
     depends_on:
       - db
       - redis

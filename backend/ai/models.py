@@ -15,7 +15,7 @@ class TryOnSession(models.Model):
     confidence_score = models.PositiveSmallIntegerField(default=0)
     added_to_cart = models.BooleanField(default=False)
     converted_to_order = models.BooleanField(default=False)
-    model_used = models.CharField(max_length=80, default="rules-v1")
+    model_used = models.CharField(max_length=80, default="anthropic")
     tokens_used = models.PositiveIntegerField(default=0)
     latency_ms = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

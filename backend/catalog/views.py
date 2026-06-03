@@ -14,6 +14,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Category, Collection, Product, ProductImage, ProductVariant
+from .realtime import (
+    publish_category_update,
+    publish_collection_update,
+    publish_image_update,
+    publish_product_deleted,
+    publish_product_update,
+)
 from .selectors import product_base_queryset, public_products
 from .serializers import (
     AdminCategoryWriteSerializer,
@@ -147,6 +154,7 @@ class AdminProductListCreateView(APIView):
         serializer = AdminProductWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         product = serializer.save()
+        publish_product_update(product, event_type="catalog.product.created", source="admin.product.create")
         return Response(ProductDetailSerializer(product_base_queryset().get(id=product.id)).data, status=status.HTTP_201_CREATED)
 
 
@@ -157,6 +165,7 @@ class AdminProductQuickCreateView(APIView):
         serializer = AdminProductQuickCreateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         product = serializer.save()
+        publish_product_update(product, event_type="catalog.product.created", source="admin.product.quick_create")
         return Response(ProductDetailSerializer(product_base_queryset().get(id=product.id)).data, status=status.HTTP_201_CREATED)
 
 
@@ -168,12 +177,14 @@ class AdminProductDetailView(APIView):
         serializer = AdminProductWriteSerializer(product, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         product = serializer.save()
+        publish_product_update(product, event_type="catalog.product.updated", source="admin.product.patch")
         return Response(ProductDetailSerializer(product_base_queryset().get(id=product.id)).data)
 
     def delete(self, request, product_id: int):
         product = get_object_or_404(Product, id=product_id)
         product.is_active = False
         product.save(update_fields=["is_active", "updated_at"])
+        publish_product_deleted(product, source="admin.product.delete")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -188,6 +199,7 @@ class AdminVariantListCreateView(APIView):
         serializer = AdminVariantWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         variant = serializer.save()
+        publish_product_update(variant.product, event_type="catalog.variant.created", variant=variant, source="admin.variant.create")
         return Response(ProductVariantSerializer(variant).data, status=status.HTTP_201_CREATED)
 
 
@@ -198,7 +210,9 @@ class AdminVariantDetailView(APIView):
         variant = get_object_or_404(ProductVariant, id=variant_id)
         serializer = AdminVariantWriteSerializer(variant, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        return Response(ProductVariantSerializer(serializer.save()).data)
+        variant = serializer.save()
+        publish_product_update(variant.product, event_type="catalog.variant.updated", variant=variant, source="admin.variant.patch")
+        return Response(ProductVariantSerializer(variant).data)
 
 
 class AdminCategoryListCreateView(APIView):
@@ -212,6 +226,7 @@ class AdminCategoryListCreateView(APIView):
         serializer = AdminCategoryWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         category = serializer.save()
+        publish_category_update(category, event_type="catalog.category.created")
         return Response(CategorySerializer(category).data, status=status.HTTP_201_CREATED)
 
 
@@ -226,6 +241,7 @@ class AdminCollectionListCreateView(APIView):
         serializer = AdminCollectionWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         collection = serializer.save()
+        publish_collection_update(collection, event_type="catalog.collection.created")
         return Response(CollectionSerializer(collection).data, status=status.HTTP_201_CREATED)
 
 
@@ -259,9 +275,11 @@ class AdminProductImageListCreateView(APIView):
                     sort_order=int(request.data.get("sort_order") or 0),
                     is_primary=str(request.data.get("is_primary", "true")).lower() in {"1", "true", "yes"},
                 )
+                publish_image_update(image)
                 return Response(ProductImageSerializer(image).data, status=status.HTTP_201_CREATED)
             return Response({"image_url": image_url}, status=status.HTTP_201_CREATED)
         serializer = AdminProductImageWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         image = serializer.save()
+        publish_image_update(image)
         return Response(ProductImageSerializer(image).data, status=status.HTTP_201_CREATED)

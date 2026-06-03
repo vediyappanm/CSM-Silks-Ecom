@@ -39,6 +39,7 @@ def send_resend_email(*, to_email: str, subject: str, html_body: str, timeout: i
         headers={
             "Authorization": f"Bearer {settings.RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "CSM-Silks-Django/1.0",
         },
         method="POST",
     )
@@ -151,4 +152,7 @@ def create_notification(*, user, title: str, body: str, notification_type: str, 
     )
     send_notification_email(notification)
     send_notification_whatsapp(notification)
+    from .realtime import publish_notification
+
+    publish_notification(notification)
     return notification
