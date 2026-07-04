@@ -43,15 +43,15 @@ def release_expired_stock_reservations(now=None) -> dict:
 
     if order_numbers:
         from orders.models import Order
-        from payments.models import Payment
+        from orders.services import cancel_order
 
-        expired_orders = Order.objects.filter(
-            order_number__in=order_numbers,
-            status=Order.Status.PAYMENT_PENDING,
+        expired_orders = (
+            Order.objects.select_for_update()
+            .filter(order_number__in=order_numbers, status=Order.Status.PAYMENT_PENDING)
+            .order_by("id")
         )
-        expired_ids = list(expired_orders.values_list("id", flat=True))
-        expired_orders.update(status=Order.Status.CANCELLED, updated_at=now)
-        Payment.objects.filter(order_id__in=expired_ids, status=Payment.Status.PENDING).update(status=Payment.Status.FAILED, updated_at=now)
+        for order in expired_orders:
+            cancel_order(order, note="Payment window expired.")
 
     return {"reservations": released_count, "units": released_units, "orders": len(order_numbers)}
 

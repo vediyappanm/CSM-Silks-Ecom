@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.permissions import IsAdminUser
+from accounts.permissions import IsStaffAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -19,7 +19,7 @@ from .serializers import StockAdjustmentSerializer, StockLedgerSerializer, Unsol
 
 
 class AdminInventoryView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         variants = ProductVariant.objects.select_related("product", "product__category").order_by("stock_qty", "sku")
@@ -66,7 +66,7 @@ class AdminInventoryView(APIView):
 
 
 class UnsoldAlertView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         cutoff = timezone.now() - timedelta(days=settings.UNSOLD_ALERT_DAYS)

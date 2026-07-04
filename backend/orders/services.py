@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from accounts.models import Address
 from cart.models import Cart
+from catalog.models import ProductVariant
 from inventory.models import StockLedger, StockReservation
 from loyalty.models import LoyaltyTransaction
 from notifications.services import create_notification
@@ -37,18 +38,43 @@ def address_snapshot(address: Address) -> dict:
     }
 
 
+def _validate_checkout_address(address: Address) -> None:
+    required = {
+        "full_name": address.full_name,
+        "phone": address.phone,
+        "address_line_1": address.address_line_1,
+        "city": address.city,
+        "state": address.state,
+        "pin_code": address.pin_code,
+    }
+    missing = [field for field, value in required.items() if not str(value or "").strip()]
+    if missing:
+        raise ValueError("Selected delivery address is incomplete. Please update full address details before placing order.")
+
+
 @transaction.atomic
 def create_order_from_cart(user, address_id: int, coupon_code: str = "", loyalty_points_to_use: int = 0, payment_method: str = Order.PaymentMethod.COD) -> Order:
     cart = Cart.objects.select_for_update().prefetch_related("items__variant", "items__product").get(user=user)
     items = list(cart.items.select_related("product", "variant"))
     if not items:
         raise ValueError("Cart is empty")
-    address = Address.objects.get(id=address_id, user=user)
+    try:
+        address = Address.objects.get(id=address_id, user=user)
+    except Address.DoesNotExist as exc:
+        raise ValueError("Delivery address not found") from exc
+    _validate_checkout_address(address)
 
+    variant_ids = [item.variant_id for item in items]
+    locked_variants = {
+        variant.id: variant
+        for variant in ProductVariant.objects.select_for_update()
+        .select_related("product")
+        .filter(id__in=variant_ids)
+    }
     for item in items:
-        variant = item.variant
-        if variant.available_qty < item.quantity:
-            raise ValueError(f"Insufficient stock for {variant.product.name}")
+        variant = locked_variants.get(item.variant_id)
+        if not variant or variant.available_qty < item.quantity:
+            raise ValueError(f"Insufficient stock for {item.product.name}")
 
     subtotal = sum(item.variant.price * item.quantity for item in items)
     coupon_discount = calculate_coupon_discount(subtotal, coupon_code or cart.coupon_code)
@@ -301,6 +327,29 @@ def order_payment_is_captured(order: Order) -> bool:
     return bool(payment and payment.status == Payment.Status.CAPTURED)
 
 
+POST_PAYMENT_STATUSES = {
+    Order.Status.CONFIRMED,
+    Order.Status.QUALITY_CHECK,
+    Order.Status.PACKED,
+    Order.Status.SHIPPED,
+    Order.Status.OUT_FOR_DELIVERY,
+    Order.Status.DELIVERED,
+    Order.Status.DELIVERY_FAILED,
+    Order.Status.RTO_INITIATED,
+    Order.Status.RTO_DELIVERED,
+}
+
+
+def validate_admin_status_change(order: Order, new_status: str) -> None:
+    if new_status == order.status:
+        return
+    if order.payment_method == Order.PaymentMethod.RAZORPAY:
+        if new_status == Order.Status.CONFIRMED and order.status == Order.Status.PAYMENT_PENDING:
+            raise ValueError("Confirm Razorpay orders only after payment capture.")
+        if new_status in POST_PAYMENT_STATUSES and not order_payment_is_captured(order):
+            raise ValueError("Cannot update Razorpay order status before payment is captured.")
+
+
 def validate_admin_workflow_action(order: Order, action: str) -> None:
     if action == "cancel":
         return
@@ -528,7 +577,6 @@ def confirm_paid_order(order: Order) -> Order:
         variant.product.save(update_fields=["total_sold", "updated_at"])
         reservation.released_at = timezone.now()
         reservation.save(update_fields=["released_at"])
-        StockLedger.objects.create(variant=variant, quantity_delta=-reservation.quantity, reason=StockLedger.Reason.SALE, reference=order.order_number)
         from catalog.realtime import publish_product_update
 
         publish_product_update(variant.product, event_type="inventory.variant.updated", variant=variant, source="order.payment.capture")
@@ -560,3 +608,139 @@ def confirm_paid_order(order: Order) -> Order:
         data={"order_id": order.id, "order_number": order.order_number},
     )
     return order
+
+
+def _apply_confirmed_order_loyalty(order: Order) -> None:
+    user = order.user
+    if order.coupon_code and order.discount_amount:
+        mark_coupon_used(order.coupon_code)
+    if order.loyalty_points_earned:
+        user.loyalty_points += order.loyalty_points_earned
+        user.save(update_fields=["loyalty_points"])
+        LoyaltyTransaction.objects.create(
+            user=user,
+            order_id=order.id,
+            transaction_type=LoyaltyTransaction.Type.EARN,
+            points=order.loyalty_points_earned,
+            balance_after=user.loyalty_points,
+            description=f"Points earned from {order.order_number}",
+        )
+
+
+def _redeem_order_loyalty_on_recovery(order: Order) -> None:
+    if not order.loyalty_points_used:
+        return
+    user = order.user
+    user.loyalty_points = max(0, user.loyalty_points - order.loyalty_points_used)
+    user.save(update_fields=["loyalty_points"])
+    LoyaltyTransaction.objects.create(
+        user=user,
+        order_id=order.id,
+        transaction_type=LoyaltyTransaction.Type.REDEEM,
+        points=-order.loyalty_points_used,
+        balance_after=user.loyalty_points,
+        description=f"Points redeemed on recovered payment for {order.order_number}",
+    )
+
+
+def _auto_refund_overcapture(order: Order) -> None:
+    payment = getattr(order, "payment", None)
+    if not payment or payment.status != Payment.Status.CAPTURED:
+        return
+    try:
+        _refund_order_payment_once(order)
+    except ValueError:
+        return
+    create_notification(
+        user=order.user,
+        title="Refund initiated",
+        body=f"Payment for {order.order_number} could not be fulfilled after expiry. A refund has been initiated.",
+        notification_type="order",
+        data={"order_id": order.id, "order_number": order.order_number},
+    )
+
+
+@transaction.atomic
+def recover_cancelled_paid_order(order: Order) -> Order:
+    order = (
+        Order.objects.select_for_update()
+        .select_related("user", "payment")
+        .prefetch_related("items__product", "items__variant", "items__variant__product")
+        .get(id=order.id)
+    )
+    if order.status == Order.Status.CONFIRMED:
+        return order
+
+    for item in order.items.select_related("variant", "variant__product"):
+        variant = ProductVariant.objects.select_for_update().get(id=item.variant_id)
+        if variant.available_qty < item.quantity:
+            _auto_refund_overcapture(order)
+            raise ValueError("Payment received after order expiry but stock is unavailable; refund has been initiated.")
+
+    for item in order.items.select_related("variant", "variant__product"):
+        variant = ProductVariant.objects.select_for_update().get(id=item.variant_id)
+        variant.mark_sold(item.quantity)
+        item.product.total_sold += item.quantity
+        item.product.save(update_fields=["total_sold", "updated_at"])
+        StockLedger.objects.create(
+            variant=variant,
+            quantity_delta=-item.quantity,
+            reason=StockLedger.Reason.SALE,
+            reference=order.order_number,
+            note="Late payment captured after reservation expiry.",
+        )
+        _publish_inventory_change(variant, source="order.payment.late_capture")
+
+    order.status = Order.Status.CONFIRMED
+    order.confirmed_at = timezone.now()
+    order.save(update_fields=["status", "confirmed_at", "updated_at"])
+    from shipping.models import ShipmentEvent
+    from shipping.services import record_tracking_event
+
+    record_tracking_event(order, ShipmentEvent.Status.CONFIRMED, description="Late payment captured and order confirmed.")
+    _redeem_order_loyalty_on_recovery(order)
+    _apply_confirmed_order_loyalty(order)
+    create_notification(
+        user=order.user,
+        title="Order confirmed",
+        body=f"Payment received for {order.order_number}. Your textile is moving to quality check.",
+        notification_type="order",
+        data={"order_id": order.id, "order_number": order.order_number},
+    )
+    return order
+
+
+@transaction.atomic
+def capture_razorpay_payment(
+    payment: Payment,
+    *,
+    razorpay_payment_id: str,
+    razorpay_signature: str = "",
+    hmac_verified: bool = True,
+) -> Order:
+    payment = Payment.objects.select_for_update().select_related("order", "order__user").get(pk=payment.pk)
+    order = (
+        Order.objects.select_for_update()
+        .select_related("user", "payment")
+        .prefetch_related("items__variant", "items__variant__product")
+        .get(id=payment.order_id)
+    )
+
+    if payment.status == Payment.Status.CAPTURED and order.status == Order.Status.CONFIRMED:
+        return order
+
+    payment.razorpay_payment_id = razorpay_payment_id
+    if razorpay_signature:
+        payment.razorpay_signature = razorpay_signature
+    payment.status = Payment.Status.CAPTURED
+    payment.is_hmac_verified = hmac_verified
+    payment.paid_at = timezone.now()
+    payment.save(update_fields=["razorpay_payment_id", "razorpay_signature", "status", "is_hmac_verified", "paid_at", "updated_at"])
+
+    if order.status == Order.Status.CANCELLED:
+        return recover_cancelled_paid_order(order)
+    if order.status == Order.Status.PAYMENT_PENDING:
+        return confirm_paid_order(order)
+    if order.status == Order.Status.CONFIRMED:
+        return order
+    raise ValueError(f"Cannot capture payment for order in {order.status} status")

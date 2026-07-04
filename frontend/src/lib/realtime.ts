@@ -52,6 +52,8 @@ export type CatalogRealtimeMessage = {
 type ConnectOptions<TMessage> = {
   onMessage: (message: TMessage) => void;
   onStatus?: (status: RealtimeStatus) => void;
+  /** Connect without JWT for public read-only channels (e.g. catalog stock). */
+  allowAnonymous?: boolean;
 };
 
 const HEARTBEAT_INTERVAL_MS = 25000;
@@ -72,7 +74,7 @@ function wsBaseUrl() {
   return `${protocol}//${window.location.host}`;
 }
 
-function connectRealtime<TMessage>(path: string, options: ConnectOptions<TMessage>) {
+function connectRealtime<TMessage>(path: string, options: ConnectOptions<TMessage> & { allowAnonymous?: boolean }) {
   if (!('WebSocket' in window)) {
     options.onStatus?.('unavailable');
     return () => undefined;
@@ -136,12 +138,14 @@ function connectRealtime<TMessage>(path: string, options: ConnectOptions<TMessag
   const open = async () => {
     if (stopped) return;
     const latestToken = await getFreshAccessToken();
-    if (!latestToken) {
+    if (!latestToken && !options.allowAnonymous) {
       options.onStatus?.('unavailable');
       return;
     }
     options.onStatus?.('connecting');
-    socket = new WebSocket(`${wsBaseUrl()}${path}`, ['csm-token', latestToken]);
+    socket = latestToken
+      ? new WebSocket(`${wsBaseUrl()}${path}`, ['csm-token', latestToken])
+      : new WebSocket(`${wsBaseUrl()}${path}`);
 
     socket.onopen = () => {
       attempt = 0;
@@ -204,5 +208,5 @@ export function connectNotificationRealtime(options: ConnectOptions<Notification
 }
 
 export function connectCatalogRealtime(options: ConnectOptions<CatalogRealtimeMessage>) {
-  return connectRealtime('/ws/catalog/', options);
+  return connectRealtime('/ws/catalog/', { ...options, allowAnonymous: options.allowAnonymous ?? true });
 }

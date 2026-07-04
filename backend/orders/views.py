@@ -7,7 +7,8 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from accounts.permissions import IsStaffAdmin
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -15,7 +16,7 @@ from analytics.audit import record_admin_audit
 from payments.services import razorpay_checkout_configured
 from .models import Coupon, Order, ReturnRequest
 from .serializers import AdminOrderStatusSerializer, AdminOrderWorkflowSerializer, AdminReturnStatusSerializer, CouponSerializer, OrderCreateSerializer, OrderSerializer, PublicOrderTrackingSerializer, ReturnCreateSerializer, ReturnSerializer
-from .services import cancel_order, confirm_paid_order, create_order_from_cart, create_return_request, update_return_status, validate_admin_workflow_action
+from .services import cancel_order, confirm_paid_order, create_order_from_cart, create_return_request, update_return_status, validate_admin_status_change, validate_admin_workflow_action
 from shipping.models import Shipment
 from shipping.shiprocket import ShiprocketError
 from shipping.services import apply_shipment_update, create_shipping_label, record_order_status_event
@@ -168,7 +169,7 @@ class OrderCancelView(APIView):
 
 
 class AdminOrderListView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         status_filter = request.query_params.get("status")
@@ -179,12 +180,17 @@ class AdminOrderListView(APIView):
 
 
 class AdminOrderStatusView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def patch(self, request, order_id: int):
         order = get_object_or_404(Order, id=order_id)
         serializer = AdminOrderStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        new_status = serializer.validated_data.get("status", order.status)
+        try:
+            validate_admin_status_change(order, new_status)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         old_status = order.status
         for key, value in serializer.validated_data.items():
             setattr(order, key, value)
@@ -206,7 +212,7 @@ class AdminOrderStatusView(APIView):
 
 
 class AdminOrderWorkflowView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def post(self, request, order_id: int):
         order = get_object_or_404(order_queryset(), id=order_id)
@@ -288,7 +294,7 @@ class AdminOrderWorkflowView(APIView):
 
 
 class AdminOrderInvoiceView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request, order_id: int):
         order = get_object_or_404(order_queryset(), id=order_id)
@@ -321,7 +327,7 @@ class ReturnListCreateView(APIView):
 
 
 class AdminReturnListView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         returns = ReturnRequest.objects.select_related("order", "user").order_by("-created_at")
@@ -329,7 +335,7 @@ class AdminReturnListView(APIView):
 
 
 class AdminReturnDetailView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def patch(self, request, return_id: int):
         ret = get_object_or_404(ReturnRequest.objects.select_related("order", "user"), id=return_id)
@@ -350,7 +356,7 @@ class AdminReturnDetailView(APIView):
 
 
 class AdminCouponListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         coupons = Coupon.objects.order_by("code")
@@ -371,7 +377,7 @@ class AdminCouponListCreateView(APIView):
 
 
 class AdminCouponDetailView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def patch(self, request, coupon_id: int):
         coupon = get_object_or_404(Coupon, id=coupon_id)

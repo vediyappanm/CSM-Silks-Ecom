@@ -11,7 +11,7 @@ PROJECT_ROOT = BASE_DIR.parent
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(PROJECT_ROOT / ".env")
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
 except ImportError:
     pass
 
@@ -153,6 +153,8 @@ CORS_ALLOWED_ORIGINS = env_list(
 CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS if not DEBUG else []))
 
+IS_PRODUCTION = APP_ENV == "production"
+
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
 SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
@@ -160,6 +162,19 @@ SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000" if not DEB
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", not DEBUG)
 SECURE_HSTS_PRELOAD = env_bool("SECURE_HSTS_PRELOAD", not DEBUG)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if env_bool("USE_X_FORWARDED_PROTO", not DEBUG) else None
+
+if IS_PRODUCTION and not DEBUG:
+    behind_proxy = env_bool("BEHIND_REVERSE_PROXY", env_bool("USE_X_FORWARDED_PROTO", False))
+    SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not behind_proxy)
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    if behind_proxy:
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    if not CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS = [origin for origin in CORS_ALLOWED_ORIGINS if origin.startswith("https://")]
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -272,6 +287,16 @@ GUPSHUP_APP_NAME = os.getenv("GUPSHUP_APP_NAME", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_OAUTH_ENABLED = env_bool("GOOGLE_OAUTH_ENABLED", bool(GOOGLE_CLIENT_ID))
+GOOGLE_OAUTH_REDIRECT_PATH = os.getenv("GOOGLE_OAUTH_REDIRECT_PATH", "/auth/google/callback")
+GOOGLE_OAUTH_REDIRECT_URIS = os.getenv("GOOGLE_OAUTH_REDIRECT_URIS", "")
+
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
 OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))
 OTP_DEV_FALLBACK_ENABLED = os.getenv("OTP_DEV_FALLBACK_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
+
+if IS_PRODUCTION and not DEBUG:
+    OTP_DEV_FALLBACK_ENABLED = False
+    PAYMENT_DEV_FALLBACK_ENABLED = False

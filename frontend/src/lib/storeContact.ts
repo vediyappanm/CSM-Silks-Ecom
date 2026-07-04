@@ -1,0 +1,4 @@
+export const STORE_PHONE_E164 = (import.meta.env.VITE_STORE_PHONE || '919876543210').replace(/\D/g, '');
+export const STORE_PHONE_DISPLAY = import.meta.env.VITE_STORE_PHONE_DISPLAY || '+91 98765 43210';
+export const STORE_PHONE_TEL = `+${STORE_PHONE_E164}`;
+export const STORE_WHATSAPP_URL = `https://wa.me/${STORE_PHONE_E164}`;

@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Heart, Home, MapPin, Menu, Moon, Search, Shirt, ShoppingBag, Sparkles, Sun, Truck, UserRound, X } from 'lucide-react';
 import { BrandMark } from '@/ui/components';
+import { getDeliveryPin, normalizeDeliveryPin, setDeliveryPin, DELIVERY_PIN_EVENT } from '@/lib/deliveryPin';
 import { useApp } from '@/store/AppContext';
 import { useTheme } from '@/store/ThemeContext';
 
@@ -12,6 +13,34 @@ export function Navbar() {
   const { isDark, toggleTheme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [deliveryPin, setDeliveryPinState] = useState(getDeliveryPin);
+  const [pinEditorOpen, setPinEditorOpen] = useState(false);
+  const [pinDraft, setPinDraft] = useState(deliveryPin);
+
+  useEffect(() => {
+    const onPinChange = (event: Event) => {
+      const next = normalizeDeliveryPin((event as CustomEvent<string>).detail || getDeliveryPin());
+      setDeliveryPinState(next);
+      setPinDraft(next);
+    };
+    window.addEventListener(DELIVERY_PIN_EVENT, onPinChange);
+    return () => window.removeEventListener(DELIVERY_PIN_EVENT, onPinChange);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.classList.add('scroll-locked');
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.classList.remove('scroll-locked');
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mobileOpen]);
 
   const isActive = (path: string) => location.pathname === path;
   const closeAndGo = (path: string) => {
@@ -34,6 +63,13 @@ export function Navbar() {
     setMobileOpen(false);
   };
 
+  const submitDeliveryPin = (event: FormEvent) => {
+    event.preventDefault();
+    const next = setDeliveryPin(pinDraft);
+    setDeliveryPinState(next);
+    setPinEditorOpen(false);
+  };
+
   return (
     <>
       <nav className="nav">
@@ -41,10 +77,34 @@ export function Navbar() {
           <BrandMark />
         </button>
 
-        <button type="button" className="nav-location" onClick={() => navigate('/search')} aria-label="Set delivery location">
-          <MapPin size={16} />
-          <span>Deliver to 600001</span>
-        </button>
+        <div className="nav-location-wrap">
+          <button
+            type="button"
+            className="nav-location"
+            onClick={() => {
+              setPinDraft(deliveryPin);
+              setPinEditorOpen(open => !open);
+            }}
+            aria-expanded={pinEditorOpen}
+            aria-label="Update delivery PIN code"
+          >
+            <MapPin size={16} />
+            <span>Deliver to {deliveryPin || 'PIN'}</span>
+          </button>
+          {pinEditorOpen && (
+            <form className="nav-pin-editor" onSubmit={submitDeliveryPin}>
+              <input
+                value={pinDraft}
+                onChange={event => setPinDraft(normalizeDeliveryPin(event.target.value))}
+                placeholder="6-digit PIN"
+                inputMode="numeric"
+                maxLength={6}
+                aria-label="Delivery PIN code"
+              />
+              <button type="submit">Update</button>
+            </form>
+          )}
+        </div>
 
         <form className="nav-search" onSubmit={submitSearch}>
           <Search size={18} />
@@ -102,7 +162,14 @@ export function Navbar() {
         </div>
       </nav>
 
-      <div className={`mob-menu ${mobileOpen ? 'on' : ''}`}>
+      <button
+        type="button"
+        className={`mob-menu-backdrop ${mobileOpen ? 'on' : ''}`}
+        aria-label="Close menu"
+        onClick={() => setMobileOpen(false)}
+      />
+
+      <div className={`mob-menu ${mobileOpen ? 'on' : ''}`} role="dialog" aria-modal="true" aria-label="Mobile navigation menu">
         <button type="button" className="mob-menu-close" onClick={() => setMobileOpen(false)} aria-label="Close menu">
           <X size={20} />
         </button>

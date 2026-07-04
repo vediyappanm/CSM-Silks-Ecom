@@ -49,7 +49,7 @@ class OTPApiTests(TestCase):
     def setUp(self):
         cache.clear()
 
-    @override_settings(DEBUG=True, SMS_OTP_ENABLED=False)
+    @override_settings(DEBUG=True, SMS_OTP_ENABLED=False, OTP_DEV_FALLBACK_ENABLED=False, OTP_EMAIL_ENABLED=False)
     def test_send_otp_requires_real_delivery_even_in_debug(self):
         response = APIClient().post("/api/auth/otp/send", {"phone": "+91 98000 01111"}, format="json")
         self.assertEqual(response.status_code, 503)
@@ -377,6 +377,13 @@ class ProductionSecuritySettingsTests(SimpleTestCase):
                 "DEFAULT_COURIER_PROVIDER": "manual",
                 "OTP_DEV_FALLBACK_ENABLED": "False",
                 "PAYMENT_DEV_FALLBACK_ENABLED": "False",
+                "SECURE_SSL_REDIRECT": "True",
+                "SESSION_COOKIE_SECURE": "True",
+                "CSRF_COOKIE_SECURE": "True",
+                "SECURE_HSTS_SECONDS": "31536000",
+                "SECURE_HSTS_INCLUDE_SUBDOMAINS": "True",
+                "SECURE_HSTS_PRELOAD": "True",
+                "CSRF_TRUSTED_ORIGINS": "https://csmsilks.example.com",
             }
         )
 
@@ -403,3 +410,155 @@ class ProductionSecuritySettingsTests(SimpleTestCase):
             {warning_id for warning_id in settings_snapshot["check_ids"] if warning_id.startswith("drf_spectacular.")},
             set(),
         )
+
+
+class GoogleAuthApiTests(TestCase):
+    @override_settings(GOOGLE_CLIENT_ID="", GOOGLE_OAUTH_ENABLED=False)
+    def test_auth_config_reports_google_disabled_by_default(self):
+        response = APIClient().get("/api/auth/config")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["google_oauth_enabled"])
+        self.assertEqual(payload["google_client_id"], "")
+        self.assertFalse(payload["otp_dev_fallback_enabled"])
+        self.assertFalse(payload["otp_delivery_configured"])
+
+    @override_settings(GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com", GOOGLE_OAUTH_ENABLED=True)
+    def test_auth_config_reports_google_enabled(self):
+        response = APIClient().get("/api/auth/config")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["google_oauth_enabled"])
+        self.assertEqual(payload["google_client_id"], "test-client.apps.googleusercontent.com")
+        self.assertFalse(payload["google_redirect_enabled"])
+
+    @override_settings(
+        GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com",
+        GOOGLE_CLIENT_SECRET="secret",
+        GOOGLE_OAUTH_ENABLED=True,
+        CORS_ALLOWED_ORIGINS=["http://localhost:5173"],
+    )
+    def test_auth_config_reports_google_redirect_enabled(self):
+        response = APIClient().get("/api/auth/config")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["google_redirect_enabled"])
+        self.assertEqual(payload["google_redirect_uri"], "http://localhost:5173/auth/google/callback")
+        self.assertIn("http://localhost:5173/auth/google/callback", payload["google_redirect_uris"])
+
+    @override_settings(DEBUG=True, OTP_DEV_FALLBACK_ENABLED=True)
+    def test_auth_config_reports_dev_otp_when_enabled(self):
+        response = APIClient().get("/api/auth/config")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["otp_dev_fallback_enabled"])
+
+    @override_settings(GOOGLE_CLIENT_ID="", GOOGLE_OAUTH_ENABLED=False)
+    def test_google_login_disabled_when_not_configured(self):
+        response = APIClient().post("/api/auth/google", {"id_token": "token"}, format="json")
+        self.assertEqual(response.status_code, 503)
+
+    @override_settings(
+        GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com",
+        GOOGLE_CLIENT_SECRET="secret",
+        GOOGLE_OAUTH_ENABLED=True,
+        CORS_ALLOWED_ORIGINS=["http://localhost:5173"],
+    )
+    def test_google_code_exchange_creates_customer_account(self):
+        from unittest.mock import patch
+
+        from accounts.google_auth import GoogleProfile
+
+        profile = GoogleProfile(
+            sub="google-sub-redirect",
+            email="redirect@example.com",
+            email_verified=True,
+            full_name="Redirect Shopper",
+            avatar_url="",
+        )
+        with patch("accounts.views.exchange_google_authorization_code", return_value=profile):
+            response = APIClient().post(
+                "/api/auth/google/exchange",
+                {
+                    "code": "auth-code",
+                    "redirect_uri": "http://localhost:5173/auth/google/callback",
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access_token", response.json())
+        user = User.objects.get(email="redirect@example.com")
+        self.assertEqual(user.google_id, "google-sub-redirect")
+
+    @override_settings(GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com", GOOGLE_OAUTH_ENABLED=True)
+    def test_google_login_creates_customer_account(self):
+        from unittest.mock import patch
+
+        from accounts.google_auth import GoogleProfile
+
+        profile = GoogleProfile(
+            sub="google-sub-1",
+            email="shopper@example.com",
+            email_verified=True,
+            full_name="Google Shopper",
+            avatar_url="https://example.com/photo.jpg",
+        )
+        with patch("accounts.views.verify_google_id_token", return_value=profile):
+            response = APIClient().post("/api/auth/google", {"id_token": "valid-token"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access_token", response.json())
+        user = User.objects.get(email="shopper@example.com")
+        self.assertEqual(user.google_id, "google-sub-1")
+        self.assertEqual(user.full_name, "Google Shopper")
+        self.assertTrue(user.is_verified)
+
+    @override_settings(GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com", GOOGLE_OAUTH_ENABLED=True)
+    def test_google_login_links_existing_email_account(self):
+        from unittest.mock import patch
+
+        from accounts.google_auth import GoogleProfile
+
+        user = User.objects.create_user(
+            username="shopper",
+            email="shopper@example.com",
+            phone="+919800009999",
+            full_name="Existing Shopper",
+        )
+        profile = GoogleProfile(
+            sub="google-sub-2",
+            email="shopper@example.com",
+            email_verified=True,
+            full_name="Google Shopper",
+            avatar_url="https://example.com/photo.jpg",
+        )
+        with patch("accounts.views.verify_google_id_token", return_value=profile):
+            response = APIClient().post("/api/auth/google", {"id_token": "valid-token"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual(user.google_id, "google-sub-2")
+        self.assertEqual(user.phone, "+919800009999")
+
+    @override_settings(GOOGLE_CLIENT_ID="test-client.apps.googleusercontent.com", GOOGLE_OAUTH_ENABLED=True)
+    def test_google_login_rejects_staff_accounts(self):
+        from unittest.mock import patch
+
+        from accounts.google_auth import GoogleProfile
+
+        User.objects.create_user(
+            username="admin",
+            email="admin@csmsilks.com",
+            password="admin123",
+            is_staff=True,
+            role=User.Role.ADMIN,
+        )
+        profile = GoogleProfile(
+            sub="google-admin",
+            email="admin@csmsilks.com",
+            email_verified=True,
+            full_name="Admin User",
+            avatar_url="",
+        )
+        with patch("accounts.views.verify_google_id_token", return_value=profile):
+            response = APIClient().post("/api/auth/google", {"id_token": "valid-token"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("admin login", response.json()["detail"].lower())

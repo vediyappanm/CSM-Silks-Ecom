@@ -9,7 +9,7 @@ from django.db.models import Max, Min
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAdminUser
+from accounts.permissions import IsStaffAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -132,7 +132,7 @@ class ProductDeliveryCheckView(APIView):
 
 
 class AdminProductListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         page = max(int(request.query_params.get("page", 1)), 1)
@@ -159,7 +159,7 @@ class AdminProductListCreateView(APIView):
 
 
 class AdminProductQuickCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def post(self, request):
         serializer = AdminProductQuickCreateSerializer(data=request.data, context={"request": request})
@@ -170,7 +170,11 @@ class AdminProductQuickCreateView(APIView):
 
 
 class AdminProductDetailView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
+
+    def get(self, request, product_id: int):
+        product = get_object_or_404(product_base_queryset(), id=product_id)
+        return Response(ProductDetailSerializer(product).data)
 
     def patch(self, request, product_id: int):
         product = get_object_or_404(Product, id=product_id)
@@ -189,7 +193,7 @@ class AdminProductDetailView(APIView):
 
 
 class AdminVariantListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         variants = ProductVariant.objects.select_related("product").order_by("product__name", "sku")
@@ -204,7 +208,7 @@ class AdminVariantListCreateView(APIView):
 
 
 class AdminVariantDetailView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def patch(self, request, variant_id: int):
         variant = get_object_or_404(ProductVariant, id=variant_id)
@@ -216,7 +220,7 @@ class AdminVariantDetailView(APIView):
 
 
 class AdminCategoryListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         categories = Category.objects.order_by("sort_order", "name")
@@ -231,7 +235,7 @@ class AdminCategoryListCreateView(APIView):
 
 
 class AdminCollectionListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         collections = Collection.objects.order_by("sort_order", "name")
@@ -246,7 +250,7 @@ class AdminCollectionListCreateView(APIView):
 
 
 class AdminProductImageListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         images = ProductImage.objects.select_related("product", "variant").order_by("-id")[:200]

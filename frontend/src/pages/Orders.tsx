@@ -68,6 +68,7 @@ export function Orders() {
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
   const [pageInfo, setPageInfo] = useState<OrderPageInfo>({ total: 0, page: 1, per_page: ORDER_PAGE_SIZE, pages: 0 });
   const [loadingMore, setLoadingMore] = useState(false);
+  const [returningOrderId, setReturningOrderId] = useState<number | null>(null);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -90,13 +91,14 @@ export function Orders() {
         const known = new Set(prev.map(order => order.id));
         return [...prev, ...data.items.filter(order => !known.has(order.id))];
       });
-    } catch {
+    } catch (err) {
       if (!append) setOrders([]);
+      showToast('!', 'Orders unavailable', err instanceof Error ? err.message : 'Unable to load orders');
     } finally {
       if (withSpinner) setLoading(false);
       if (append) setLoadingMore(false);
     }
-  }, [isAuthed]);
+  }, [isAuthed, showToast]);
 
   useEffect(() => {
     void Promise.resolve().then(() => loadOrdersPage(1, false, true));
@@ -137,12 +139,16 @@ export function Orders() {
   };
 
   const requestReturn = async (order: Order) => {
+    if (returningOrderId === order.id) return;
+    setReturningOrderId(order.id);
     try {
       await api.returns.create({ order_id: order.id, reason: 'Customer return request', details: 'Return requested from account orders page.' });
       setOrders(prev => prev.map(item => item.id === order.id ? { ...item, status: 'return_initiated' } : item));
       showToast('OK', 'Return requested', `Return request created for ${order.order_number}`);
     } catch (err) {
       showToast('!', 'Return failed', err instanceof Error ? err.message : 'Unable to request return');
+    } finally {
+      setReturningOrderId(null);
     }
   };
 
@@ -307,30 +313,30 @@ export function Orders() {
                 </div>
               </div>
               <div className="oc-actions">
-                <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }}>
+                <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); navigate(`/tracking/${o.id}`); }} aria-label={`Track order ${o.order_number}`}>
                   <Route size={14} /> Track lifecycle
                 </button>
                 {o.status === 'payment_pending' && (
-                  <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); void retryPayment(o); }}>
+                  <button className="oc-btn oc-btn-track" onClick={(e) => { e.stopPropagation(); void retryPayment(o); }} aria-label={`Retry payment for ${o.order_number}`}>
                     Retry Payment
                   </button>
                 )}
                 {o.status === 'delivered' && (
-                  <button className="oc-btn oc-btn-review" onClick={(e) => { e.stopPropagation(); openReview(o); }}>
+                  <button className="oc-btn oc-btn-review" onClick={(e) => { e.stopPropagation(); openReview(o); }} aria-label={`Review order ${o.order_number}`}>
                     Review
                   </button>
                 )}
                 {['pending', 'payment_pending', 'confirmed'].includes(o.status) && (
-                  <button className="oc-btn oc-btn-cancel" onClick={(e) => { e.stopPropagation(); void cancelOrder(o); }}>
+                  <button className="oc-btn oc-btn-cancel" onClick={(e) => { e.stopPropagation(); void cancelOrder(o); }} aria-label={`Cancel order ${o.order_number}`}>
                     Cancel
                   </button>
                 )}
                 {o.status === 'delivered' && (
-                  <button className="oc-btn oc-btn-return" onClick={(e) => { e.stopPropagation(); void requestReturn(o); }}>
+                  <button className="oc-btn oc-btn-return" onClick={(e) => { e.stopPropagation(); void requestReturn(o); }} disabled={returningOrderId === o.id} aria-label={`Return order ${o.order_number}`}>
                     Return
                   </button>
                 )}
-                <button className="oc-btn oc-btn-invoice" onClick={(e) => { e.stopPropagation(); void downloadInvoice(o); }}>
+                <button className="oc-btn oc-btn-invoice" onClick={(e) => { e.stopPropagation(); void downloadInvoice(o); }} aria-label={`Download invoice for ${o.order_number}`}>
                   Invoice
                 </button>
               </div>

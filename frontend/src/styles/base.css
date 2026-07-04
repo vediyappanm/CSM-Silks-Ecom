@@ -22,7 +22,13 @@ body {
 #root {
   width: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--page);
+}
+
+body.scroll-locked {
+  overflow: hidden;
+  touch-action: none;
 }
 
 button, input, select, textarea {
@@ -271,8 +277,12 @@ textarea {
   line-height: 1.6;
 }
 
-@media (max-width: 760px) {
-  .section { padding: 56px 20px; }
+@media (max-width: 768px) {
+  .section { padding: 56px var(--page-gutter); }
   .section-heading h2 { font-size: 42px; }
-  .btn { width: 100%; }
+  .btn-row .btn,
+  .hero-actions .btn,
+  .cart-empty .btn {
+    width: 100%;
+  }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ShoppingCart, Sparkles } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, resolveAssetUrl } from '@/lib/api';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
 import type { Product } from '@/types';
@@ -63,7 +63,7 @@ export function TryOn() {
     try {
       const result = await api.ai.tryon({
         product_id: suggestedProduct?.id,
-        product_image_url: suggestedProduct?.images?.[0],
+        product_image_url: resolveAssetUrl(suggestedProduct?.images?.[0]),
         skin_tone: skin,
         body_type: body,
         drape_style: drape,

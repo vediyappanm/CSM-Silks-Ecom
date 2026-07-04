@@ -32,8 +32,20 @@ class UserSerializer(serializers.ModelSerializer):
             "state",
             "wa_opted_in",
             "push_opted_in",
+            "avatar_url",
         ]
         read_only_fields = ["id", "username", "role", "is_verified", "loyalty_points", "loyalty_tier"]
+
+    def validate_email(self, value: str) -> str:
+        email = (value or "").strip().lower()
+        if not email:
+            return email
+        qs = User.objects.filter(email__iexact=email)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Email already belongs to another account")
+        return email
 
 
 class OTPRequestSerializer(serializers.Serializer):
@@ -50,8 +62,18 @@ class OTPVerifySerializer(serializers.Serializer):
     push_opted_in = serializers.BooleanField(required=False)
 
 
+class GoogleLoginSerializer(serializers.Serializer):
+    id_token = serializers.CharField()
+    nonce = serializers.CharField(required=False, allow_blank=True)
+
+
+class GoogleCodeExchangeSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    redirect_uri = serializers.CharField()
+
+
 class AdminLoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 
@@ -108,10 +130,21 @@ class AddressSerializer(serializers.ModelSerializer):
             attrs["full_name"] = f"{first_name} {last_name}".strip()
         if not attrs.get("full_name") and not getattr(self.instance, "full_name", ""):
             errors["full_name"] = ["This field is required."]
+        if not attrs.get("phone") and not getattr(self.instance, "phone", ""):
+            errors["phone"] = ["This field is required."]
         if not attrs.get("address_line_1") and not getattr(self.instance, "address_line_1", ""):
             errors["address_line_1"] = ["This field is required."]
+        if not attrs.get("city") and not getattr(self.instance, "city", ""):
+            errors["city"] = ["This field is required."]
+        if not attrs.get("state") and not getattr(self.instance, "state", ""):
+            errors["state"] = ["This field is required."]
         if not attrs.get("pin_code") and not getattr(self.instance, "pin_code", ""):
             errors["pin_code"] = ["This field is required."]
+        pin_code = attrs.get("pin_code") or getattr(self.instance, "pin_code", "")
+        if pin_code and not str(pin_code).strip().isdigit():
+            errors["pin_code"] = ["Enter a valid numeric PIN code."]
+        elif pin_code and len(str(pin_code).strip()) != 6:
+            errors["pin_code"] = ["PIN code must be 6 digits."]
         if errors:
             raise serializers.ValidationError(errors)
         return attrs

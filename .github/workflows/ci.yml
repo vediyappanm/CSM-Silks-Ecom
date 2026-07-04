@@ -47,7 +47,7 @@ jobs:
         run: |
           python backend/manage.py check
           python backend/manage.py migrate --noinput
-          python backend/manage.py test accounts catalog cart orders payments inventory loyalty notifications analytics shipping reviews ai
+          python backend/manage.py test accounts catalog cart orders payments inventory loyalty notifications analytics shipping reviews ai csm_backend
 
   frontend:
     name: Frontend Lint & Build
@@ -71,6 +71,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Unit tests
+        run: npm test
 
       - name: Build
         run: npm run build

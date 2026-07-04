@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SlidersHorizontal } from 'lucide-react';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
+import { liveStatusLabel } from '@/lib/liveStatus';
 import { ProductGridSkeleton } from '@/ui/components';
 import type { CatalogFacets, Product } from '@/types';
 
 const CATS = ['all', 'kanjivaram', 'bridal', 'festive', 'patola', 'daily', 'mysore', 'banarasi'] as const;
 
 export function Womens() {
-  const [filter, setFilter] = useState<string>('all');
+  const [searchParams] = useSearchParams();
+  const [manualFilter, setManualFilter] = useState<string>('all');
+  const filter = useMemo(() => {
+    const category = (searchParams.get('category') || '').toLowerCase();
+    if (category && (CATS as readonly string[]).includes(category)) return category;
+    return manualFilter;
+  }, [searchParams, manualFilter]);
   const [products, setProducts] = useState<Product[]>([]);
   const [facets, setFacets] = useState<CatalogFacets | null>(null);
   const [sort, setSort] = useState('popularity');
@@ -60,7 +68,7 @@ export function Womens() {
 
   const changeFilter = (nextFilter: string) => {
     setLoading(true);
-    setFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
+    setManualFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
   };
 
   return (
@@ -69,7 +77,7 @@ export function Womens() {
         <div>
           <div className="catalog-hero-kicker">
             <span>Women's collection</span>
-            <small className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</small>
+            <small className={`ws-chip ${realtimeStatus}`}>{liveStatusLabel(realtimeStatus, 'stock')}</small>
           </div>
           <h1>Pure silk sarees</h1>
           <p>Handwoven Kanjivaram, bridal, festive, daily, Patola, Mysore, and Banarasi edits with live stock.</p>
@@ -103,8 +111,19 @@ export function Womens() {
       />
 
       <section className="section surface-section">
+        <div className="catalog-results-bar">
+          <span>{loading ? 'Updating live catalog...' : `${products.length} products`}</span>
+          <span className={`ws-chip ${realtimeStatus}`}>{liveStatusLabel(realtimeStatus, 'stock')}</span>
+        </div>
         {loading ? (
           <ProductGridSkeleton />
+        ) : products.length === 0 ? (
+          <div className="catalog-empty">
+            <div className="catalog-empty-mark">CSM</div>
+            <h2>No sarees match these filters</h2>
+            <p>Try another collection, price range, or turn off in-stock only.</p>
+            <button type="button" className="btn btn-primary" onClick={() => { setManualFilter('all'); setMaxPrice(''); setRating(''); setInStock(false); }}>Reset filters</button>
+          </div>
         ) : (
           <div className="pg">
             {products.map(product => <ProductCard key={product.id} product={product} />)}

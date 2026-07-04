@@ -107,4 +107,12 @@ def production_fallback_checks(app_configs, **kwargs):
                 id="csm.E008",
             )
         )
+    if settings.GOOGLE_OAUTH_ENABLED and not settings.GOOGLE_CLIENT_ID:
+        errors.append(
+            Error(
+                "GOOGLE_OAUTH_ENABLED is True but GOOGLE_CLIENT_ID is empty.",
+                hint="Set GOOGLE_CLIENT_ID from Google Cloud Console or set GOOGLE_OAUTH_ENABLED=False.",
+                id="csm.E009",
+            )
+        )
     return errors

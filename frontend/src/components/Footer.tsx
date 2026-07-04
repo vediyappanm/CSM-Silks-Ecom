@@ -1,6 +1,7 @@
 import { FileText, MapPin, MessageCircle, Phone, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BrandMark } from '@/ui/components';
+import { STORE_PHONE_DISPLAY, STORE_PHONE_TEL, STORE_WHATSAPP_URL } from '@/lib/storeContact';
 
 export function Footer() {
   const navigate = useNavigate();
@@ -19,18 +20,18 @@ export function Footer() {
           <div className="fc-title">Women</div>
           <div className="footer-links">
             <button onClick={() => navigate('/womens')}>Kanjivaram silks</button>
-            <button onClick={() => navigate('/womens')}>Bridal sarees</button>
-            <button onClick={() => navigate('/womens')}>Festive collection</button>
-            <button onClick={() => navigate('/womens')}>Daily silk</button>
+            <button onClick={() => navigate('/womens?category=bridal')}>Bridal sarees</button>
+            <button onClick={() => navigate('/womens?category=festive')}>Festive collection</button>
+            <button onClick={() => navigate('/womens?category=daily')}>Daily silk</button>
           </div>
         </div>
         <div>
           <div className="fc-title">Men</div>
           <div className="footer-links">
-            <button onClick={() => navigate('/mens')}>Silk dhotis</button>
-            <button onClick={() => navigate('/mens')}>Veshtis</button>
-            <button onClick={() => navigate('/mens')}>Silk shirts</button>
-            <button onClick={() => navigate('/mens')}>Wedding sets</button>
+            <button onClick={() => navigate('/mens?category=dhoti')}>Silk dhotis</button>
+            <button onClick={() => navigate('/mens?category=veshti')}>Veshtis</button>
+            <button onClick={() => navigate('/mens?category=shirt')}>Silk shirts</button>
+            <button onClick={() => navigate('/mens?category=set')}>Wedding sets</button>
           </div>
         </div>
         <div>
@@ -45,8 +46,8 @@ export function Footer() {
         <div>
           <div className="fc-title">Contact</div>
           <div className="footer-contact">
-            <a href="tel:+919876543210"><Phone size={15} /> +91 98765 43210</a>
-            <a href="https://wa.me/919876543210" target="_blank"><MessageCircle size={15} /> WhatsApp</a>
+            <a href={`tel:${STORE_PHONE_TEL}`}><Phone size={15} /> {STORE_PHONE_DISPLAY}</a>
+            <a href={STORE_WHATSAPP_URL} target="_blank" rel="noreferrer noopener"><MessageCircle size={15} /> WhatsApp</a>
             <span><MapPin size={15} /> Kanchipuram, TN</span>
             <span><Truck size={15} /> Pan-India ship</span>
             <span><FileText size={15} /> GST invoice</span>

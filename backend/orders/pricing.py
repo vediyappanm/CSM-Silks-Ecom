@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
@@ -49,13 +50,20 @@ def calculate_coupon_discount(subtotal: Decimal, coupon_code: str = "") -> Decim
     return Decimal("0.00")
 
 
+@transaction.atomic
 def mark_coupon_used(coupon_code: str) -> None:
     code = coupon_code.upper().strip()
     if not code:
         return
     from .models import Coupon
 
-    Coupon.objects.filter(code=code, is_active=True).update(used_count=F("used_count") + 1)
+    coupon = Coupon.objects.select_for_update().filter(code=code, is_active=True).first()
+    if not coupon:
+        return
+    if coupon.usage_limit is not None and coupon.used_count >= coupon.usage_limit:
+        raise ValueError("Coupon usage limit exceeded")
+    coupon.used_count += 1
+    coupon.save(update_fields=["used_count"])
 
 
 def unmark_coupon_used(coupon_code: str) -> None:

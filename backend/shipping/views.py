@@ -4,7 +4,7 @@ import secrets
 
 from django.conf import settings
 from rest_framework import status
-from rest_framework.permissions import IsAdminUser
+from accounts.permissions import IsStaffAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.http import HttpResponse
@@ -78,7 +78,7 @@ def _verify_webhook_secret(request) -> bool:
 
 
 class AdminShipmentListCreateView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         shipments = Shipment.objects.select_related("order").order_by("-created_at")
@@ -104,7 +104,7 @@ class AdminShipmentListCreateView(APIView):
 
 
 class AdminShipmentLabelView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request, shipment_id: int):
         shipment = get_object_or_404(Shipment.objects.select_related("order", "order__user").prefetch_related("order__items"), id=shipment_id)
@@ -114,7 +114,7 @@ class AdminShipmentLabelView(APIView):
 
 
 class AdminShipmentManifestView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request, shipment_id: int):
         shipment = get_object_or_404(Shipment.objects.select_related("order"), id=shipment_id)

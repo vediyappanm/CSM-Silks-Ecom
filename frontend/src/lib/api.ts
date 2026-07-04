@@ -2,6 +2,7 @@ import type {
   Address,
   AdminAuditLog,
   AdminCoupon,
+  AdminReview,
   AdminProductQuickCreatePayload,
   AdminInventoryRow,
   AdminShipment,
@@ -16,6 +17,7 @@ import type {
   PaginatedResponse,
   Product,
   ProductReview,
+  ProductVariant,
   ReturnRequest,
   User,
 } from '@/types';
@@ -23,6 +25,41 @@ import type {
 const API_BASE = '/api';
 const ACCESS_KEY = 'csm_access_token';
 const REFRESH_KEY = 'csm_refresh_token';
+const API_TARGET = import.meta.env.VITE_API_TARGET || API_BASE;
+
+function getApiOrigin() {
+  if (typeof window === 'undefined') return '';
+  if (API_TARGET.startsWith('http://') || API_TARGET.startsWith('https://')) {
+    return new URL(API_TARGET).origin;
+  }
+  return window.location.origin;
+}
+
+export function resolveAssetUrl(url?: string | null) {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (
+    url.startsWith('#')
+    || url.startsWith('rgb(')
+    || url.startsWith('rgba(')
+    || url.startsWith('hsl(')
+    || url.startsWith('hsla(')
+    || url.startsWith('linear-gradient(')
+    || url.startsWith('radial-gradient(')
+  ) {
+    return url;
+  }
+  return new URL(url.startsWith('/') ? url : `/${url}`, getApiOrigin()).toString();
+}
+
+export function isImageAssetUrl(url?: string | null) {
+  if (!url) return false;
+  return url.startsWith('http')
+    || url.startsWith('/')
+    || url.startsWith('data:')
+    || url.startsWith('blob:');
+}
 
 type JsonMap = Record<string, unknown>;
 type RazorpayOrderResponse = { razorpay_order_id: string; amount: number; currency: string; order_id: number; key?: string };
@@ -37,6 +74,7 @@ type OTPDeliveryResponse = {
   email_sent?: boolean;
   email_masked?: string;
   delivery_channels?: string[];
+  dev_otp?: string;
 };
 type CustomerSignupProfile = {
   full_name?: string;
@@ -130,6 +168,17 @@ function normalizeProduct(product: Product): Product {
     ...product,
     price: Number(product.price || 0),
     mrp: Number(product.mrp || 0),
+    images: (product.images || []).map(resolveAssetUrl).filter(Boolean),
+    image_records: (product.image_records || []).map(record => ({
+      ...record,
+      image_url: resolveAssetUrl(record.image_url),
+    })),
+    variants: (product.variants || []).map(variant => ({
+      ...variant,
+      price: Number(variant.price || 0),
+      mrp: Number(variant.mrp || 0),
+      available_qty: Number(variant.available_qty ?? 0),
+    })),
     colors: product.colors || product.colours || ['#C4923A'],
     hook: product.hook || '',
     badge: product.badge || 'pb-new',
@@ -137,6 +186,22 @@ function normalizeProduct(product: Product): Product {
     emoji: product.emoji || 'CSM',
     bg: product.bg || 'linear-gradient(145deg,#1A1208,#8B1A1A,#C4923A)',
   };
+}
+
+function formatApiError(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(formatApiError).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if ('detail' in record) return formatApiError(record.detail);
+    if ('message' in record) return formatApiError(record.message);
+    return Object.entries(record)
+      .map(([key, nested]) => `${key}: ${formatApiError(nested)}`)
+      .filter(Boolean)
+      .join('; ');
+  }
+  return String(value);
 }
 
 async function request<T>(endpoint: string, options?: RequestInit, retryOnUnauthorized = true): Promise<T> {
@@ -160,7 +225,7 @@ async function request<T>(endpoint: string, options?: RequestInit, retryOnUnauth
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || err.message || `API error: ${res.status}`);
+    throw new Error(formatApiError(err.detail || err.message || err) || `API error: ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -183,7 +248,7 @@ async function download(endpoint: string, retryOnUnauthorized = true): Promise<B
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || err.message || `API error: ${res.status}`);
+    throw new Error(formatApiError(err.detail || err.message || err) || `API error: ${res.status}`);
   }
   return res.blob();
 }
@@ -230,6 +295,31 @@ export const api = {
   },
 
   auth: {
+    config: () => request<{
+      google_oauth_enabled: boolean;
+      google_client_id: string;
+      google_redirect_enabled: boolean;
+      google_redirect_uri: string;
+      google_redirect_uris: string[];
+      otp_dev_fallback_enabled: boolean;
+      otp_delivery_configured: boolean;
+    }>('/auth/config'),
+    googleLogin: async (id_token: string, nonce?: string) => {
+      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/google', {
+        method: 'POST',
+        body: JSON.stringify({ id_token, ...(nonce ? { nonce } : {}) }),
+      });
+      setTokens(data.access_token, data.refresh_token);
+      return data;
+    },
+    googleExchange: async (code: string, redirect_uri: string) => {
+      const data = await request<{ access_token: string; refresh_token: string; user: User }>('/auth/google/exchange', {
+        method: 'POST',
+        body: JSON.stringify({ code, redirect_uri }),
+      });
+      setTokens(data.access_token, data.refresh_token);
+      return data;
+    },
     sendOtp: (phone: string, email?: string) => request<OTPDeliveryResponse>('/auth/otp/send', {
       method: 'POST',
       body: JSON.stringify({ phone, ...(email ? { email } : {}) }),
@@ -345,10 +435,47 @@ export const api = {
 
   admin: {
     dashboard: () => request<AdminDashboardResponse>('/admin/dashboard'),
-    products: async () => {
-      const data = await request<PaginatedResponse<Product>>('/admin/products');
-      return { ...data, items: data.items.map(normalizeProduct) };
+    products: (params?: QueryParams) => {
+      const qs = queryString(params);
+      return request<PaginatedResponse<Product>>(`/admin/products${qs}`).then(data => ({
+        ...data,
+        items: data.items.map(normalizeProduct),
+      }));
     },
+    updateProduct: async (productId: number, data: JsonMap) =>
+      normalizeProduct(await request<Product>(`/admin/products/${productId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      })),
+    getProduct: async (productId: number) =>
+      normalizeProduct(await request<Product>(`/admin/products/${productId}`)),
+    deleteProduct: (productId: number) =>
+      request<void>(`/admin/products/${productId}`, { method: 'DELETE' }),
+    variants: () => request<ProductVariant[]>('/admin/variants'),
+    updateVariant: (variantId: number, data: JsonMap) =>
+      request<ProductVariant>(`/admin/variants/${variantId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    createCategory: (data: Partial<CatalogCategory>) =>
+      request<CatalogCategory>('/admin/categories', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    reviews: (params?: { published?: string; q?: string; limit?: number }) => {
+      const qs = queryString(params);
+      return request<AdminReview[]>(`/admin/reviews${qs}`);
+    },
+    updateReview: (reviewId: number, data: { is_published?: boolean; title?: string; body?: string }) =>
+      request<AdminReview>(`/admin/reviews/${reviewId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    createRefund: (data: { order_id: number; amount?: number; reason?: string }) =>
+      request<JsonMap>('/payments/refund', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
     categories: () => request<CatalogCategory[]>('/admin/categories'),
     collections: () => request<CatalogCollection[]>('/admin/collections'),
     createCollection: (data: Partial<CatalogCollection>) =>

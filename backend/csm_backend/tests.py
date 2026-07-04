@@ -21,6 +21,8 @@ class ReadinessEndpointTests(TestCase):
         NOTIFICATION_EMAIL_ENABLED=True,
         WHATSAPP_ENABLED=False,
         DEFAULT_COURIER_PROVIDER="manual",
+        OTP_DEV_FALLBACK_ENABLED=False,
+        PAYMENT_DEV_FALLBACK_ENABLED=False,
     )
     def test_readiness_reports_ready_without_secret_values(self):
         response = APIClient().get("/api/readiness")

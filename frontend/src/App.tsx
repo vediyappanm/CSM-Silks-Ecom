@@ -4,14 +4,17 @@ import { Ticker } from '@/components/Ticker';
 import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { FloatingButtons, ToastStack } from '@/components/FloatingButtons';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { AppProvider, useApp } from '@/store/AppContext';
 import { ThemeProvider } from '@/store/ThemeContext';
+import { CUSTOMER_AUTH_PATHS, GOOGLE_CALLBACK_PATH, customerNextPath, isProtectedCustomerPath, safeCustomerRedirect } from '@/lib/routes';
 import { Account } from '@/pages/Account';
 import { Admin } from '@/pages/Admin';
 import { Cart } from '@/pages/Cart';
 import { Checkout } from '@/pages/Checkout';
 import { CustomerAuth } from '@/pages/CustomerAuth';
+import { GoogleCallback } from '@/pages/GoogleCallback';
 import { Home } from '@/pages/Home';
 import { Mens } from '@/pages/Mens';
 import { Notifications } from '@/pages/Notifications';
@@ -42,19 +45,6 @@ const PAGE_META: Array<{ match: (path: string) => boolean; title: string; descri
   { match: path => path === '/admin', title: 'Admin Console - CSM Silks', description: 'Manage CSM Silks catalog, inventory, orders, shipments, returns, and reports.' },
 ];
 
-const CUSTOMER_AUTH_PATHS = new Set(['/login', '/signup']);
-
-function customerNextPath(location: ReturnType<typeof useLocation>) {
-  return `${location.pathname}${location.search}${location.hash}`;
-}
-
-function safeCustomerRedirect(value: string | null) {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/';
-  const pathOnly = value.split(/[?#]/, 1)[0];
-  if (CUSTOMER_AUTH_PATHS.has(pathOnly)) return '/';
-  return value;
-}
-
 function PageMeta() {
   const location = useLocation();
   const meta = PAGE_META.find(item => item.match(location.pathname)) || {
@@ -79,8 +69,9 @@ function AppLayout() {
   const location = useLocation();
   const { authReady, isAuthed, user } = useApp();
   const isAdminRoute = location.pathname === '/admin';
-  const isAuthRoute = CUSTOMER_AUTH_PATHS.has(location.pathname);
+  const isAuthRoute = CUSTOMER_AUTH_PATHS.has(location.pathname) || location.pathname === GOOGLE_CALLBACK_PATH;
   const isStaffSession = user?.role === 'admin' || user?.role === 'super_admin';
+  const isProtectedRoute = isProtectedCustomerPath(location.pathname);
 
   if (isAdminRoute) {
     return (
@@ -93,30 +84,15 @@ function AppLayout() {
     );
   }
 
-  if (!authReady && !isAuthRoute) {
-    return (
-      <>
-        <PageMeta />
-        <AuthRouteLoading />
-      </>
-    );
-  }
-
   if (authReady && isStaffSession) {
     return <Navigate to="/admin" replace />;
   }
 
-  if (!isAuthed && !isAuthRoute) {
-    const next = encodeURIComponent(customerNextPath(location));
-    return <Navigate to={`/login?next=${next}`} replace />;
-  }
-
-  if (isAuthed && isAuthRoute) {
-    const query = new URLSearchParams(location.search);
-    return <Navigate to={safeCustomerRedirect(query.get('next'))} replace />;
-  }
-
   if (isAuthRoute) {
+    if (authReady && isAuthed) {
+      const query = new URLSearchParams(location.search);
+      return <Navigate to={safeCustomerRedirect(query.get('next'))} replace />;
+    }
     return (
       <>
         <PageMeta />
@@ -125,6 +101,7 @@ function AppLayout() {
             <Routes>
               <Route path="/login" element={<CustomerAuth initialMode="login" />} />
               <Route path="/signup" element={<CustomerAuth initialMode="signup" />} />
+              <Route path={GOOGLE_CALLBACK_PATH} element={<GoogleCallback />} />
             </Routes>
           </main>
         </ErrorBoundary>
@@ -133,17 +110,32 @@ function AppLayout() {
     );
   }
 
+  if (isProtectedRoute && !authReady) {
+    return (
+      <>
+        <PageMeta />
+        <AuthRouteLoading />
+      </>
+    );
+  }
+
+  if (isProtectedRoute && authReady && !isAuthed) {
+    const next = encodeURIComponent(customerNextPath(location.pathname, location.search, location.hash));
+    return <Navigate to={`/login?next=${next}`} replace />;
+  }
+
   return (
     <>
       <PageMeta />
       <Ticker />
       <Navbar />
       <ErrorBoundary>
-        <main style={{ minHeight: 'calc(100vh - 104px)' }}>
+        <main className="storefront-main">
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/womens" element={<Womens />} />
             <Route path="/mens" element={<Mens />} />
+            <Route path="/collections" element={<Navigate to="/womens" replace />} />
             <Route path="/product/:gender/:id" element={<ProductDetail />} />
             <Route path="/cart" element={<Cart />} />
             <Route path="/checkout" element={<Checkout />} />
@@ -151,8 +143,6 @@ function AppLayout() {
             <Route path="/tracking" element={<Tracking />} />
             <Route path="/tracking/:orderId" element={<Tracking />} />
             <Route path="/account" element={<Account />} />
-            <Route path="/login" element={<CustomerAuth initialMode="login" />} />
-            <Route path="/signup" element={<CustomerAuth initialMode="signup" />} />
             <Route path="/search" element={<Search />} />
             <Route path="/wishlist" element={<WishlistPage />} />
             <Route path="/notifications" element={<Notifications />} />
@@ -163,6 +153,7 @@ function AppLayout() {
       </ErrorBoundary>
       <Footer />
       <FloatingButtons />
+      <MobileBottomNav />
       <ToastStack />
     </>
   );

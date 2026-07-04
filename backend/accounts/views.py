@@ -2,24 +2,38 @@ from __future__ import annotations
 
 import logging
 import random
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password, make_password
 from django.conf import settings
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .email import OTPEmailDeliveryError, mask_email, otp_email_configured, send_otp_email
+from .google_auth import (
+    GoogleAuthError,
+    allowed_google_redirect_uris,
+    default_google_redirect_uri,
+    exchange_google_authorization_code,
+    google_oauth_configured,
+    google_redirect_oauth_configured,
+    verify_google_id_token,
+)
 from .models import Address, OTPChallenge
 from .serializers import (
     AddressSerializer,
     AdminLoginSerializer,
+    GoogleLoginSerializer,
+    GoogleCodeExchangeSerializer,
     OTPRequestSerializer,
     OTPVerifySerializer,
     UserSerializer,
@@ -118,6 +132,11 @@ class SendOTPView(APIView):
                 payload["delivery_failures"] = delivery_failures
             return Response(payload, status=code)
 
+        window_start = timezone.now() - timedelta(minutes=settings.OTP_TTL_MINUTES)
+        recent_sends = OTPChallenge.objects.filter(phone=phone, created_at__gte=window_start).count()
+        if recent_sends >= settings.OTP_RATE_LIMIT:
+            return Response({"detail": "Too many OTP requests. Please wait before trying again."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         OTPChallenge.objects.create(phone=phone, otp_hash=make_password(otp), expires_at=OTPChallenge.expiry_time())
         return Response(response)
 
@@ -169,6 +188,128 @@ class VerifyOTPView(APIView):
         return Response(token_payload(user))
 
 
+def _upsert_google_user(profile) -> User:
+    user = User.objects.filter(google_id=profile.sub).first()
+    if user:
+        if user.is_staff_admin:
+            raise GoogleAuthError("Use admin login for staff accounts")
+        update_fields: list[str] = []
+        if profile.full_name and not user.full_name:
+            user.full_name = profile.full_name
+            update_fields.append("full_name")
+        if profile.avatar_url and user.avatar_url != profile.avatar_url:
+            user.avatar_url = profile.avatar_url
+            update_fields.append("avatar_url")
+        if not user.is_verified:
+            user.is_verified = True
+            update_fields.append("is_verified")
+        if update_fields:
+            user.save(update_fields=update_fields)
+        return user
+
+    user = User.objects.filter(email__iexact=profile.email).first()
+    if user:
+        if user.is_staff_admin:
+            raise GoogleAuthError("Use admin login for staff accounts")
+        if user.google_id and user.google_id != profile.sub:
+            raise GoogleAuthError("This email is linked to a different Google account")
+        user.google_id = profile.sub
+        update_fields = ["google_id"]
+        if profile.full_name and not user.full_name:
+            user.full_name = profile.full_name
+            update_fields.append("full_name")
+        if profile.avatar_url:
+            user.avatar_url = profile.avatar_url
+            update_fields.append("avatar_url")
+        if not user.is_verified:
+            user.is_verified = True
+            update_fields.append("is_verified")
+        user.save(update_fields=list(dict.fromkeys(update_fields)))
+        return user
+
+    username_base = profile.email.split("@", 1)[0][:30] or f"google_{profile.sub[:20]}"
+    username = username_base
+    counter = 2
+    while User.objects.filter(username=username).exists():
+        username = f"{username_base[:24]}{counter}"
+        counter += 1
+
+    return User.objects.create(
+        username=username,
+        email=profile.email,
+        google_id=profile.sub,
+        full_name=profile.full_name,
+        avatar_url=profile.avatar_url,
+        is_verified=True,
+        role=User.Role.CUSTOMER,
+    )
+
+
+class AuthConfigView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        otp_delivery_configured = twilio_configured() or otp_email_configured()
+        return Response(
+            {
+                "google_oauth_enabled": google_oauth_configured(),
+                "google_client_id": settings.GOOGLE_CLIENT_ID if google_oauth_configured() else "",
+                "google_redirect_enabled": google_redirect_oauth_configured(),
+                "google_redirect_uri": default_google_redirect_uri(),
+                "google_redirect_uris": allowed_google_redirect_uris(),
+                "otp_dev_fallback_enabled": bool(settings.DEBUG and settings.OTP_DEV_FALLBACK_ENABLED),
+                "otp_delivery_configured": otp_delivery_configured,
+            }
+        )
+
+
+class GoogleLoginView(APIView):
+    authentication_classes = []
+    permission_classes = []
+    throttle_scope = "otp"
+
+    def post(self, request):
+        if not google_oauth_configured():
+            return Response({"detail": "Google sign-in is not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            profile = verify_google_id_token(
+                serializer.validated_data["id_token"],
+                expected_nonce=serializer.validated_data.get("nonce") or None,
+            )
+            user = _upsert_google_user(profile)
+        except GoogleAuthError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+        return Response(token_payload(user))
+
+
+class GoogleCodeExchangeView(APIView):
+    authentication_classes = []
+    permission_classes = []
+    throttle_scope = "otp"
+
+    def post(self, request):
+        if not google_redirect_oauth_configured():
+            return Response({"detail": "Google redirect sign-in is not configured"}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        serializer = GoogleCodeExchangeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            profile = exchange_google_authorization_code(
+                code=serializer.validated_data["code"],
+                redirect_uri=serializer.validated_data["redirect_uri"],
+            )
+            user = _upsert_google_user(profile)
+        except GoogleAuthError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+        return Response(token_payload(user))
+
+
 class AdminLoginView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -195,9 +336,12 @@ class RefreshView(APIView):
         refresh_value = request.data.get("refresh") or request.data.get("refresh_token")
         if not refresh_value:
             return Response({"detail": "refresh token required"}, status=status.HTTP_400_BAD_REQUEST)
-        refresh = RefreshToken(refresh_value)
-        user_id = refresh.get("user_id")
-        user = User.objects.get(id=user_id)
+        try:
+            refresh = RefreshToken(refresh_value)
+            user_id = refresh.get("user_id")
+            user = User.objects.get(id=user_id)
+        except (TokenError, User.DoesNotExist, KeyError, TypeError):
+            return Response({"detail": "Invalid or expired refresh token"}, status=status.HTTP_401_UNAUTHORIZED)
         return Response({"access_token": str(refresh.access_token), "refresh_token": str(refresh), "user": UserSerializer(user).data})
 
 
@@ -233,7 +377,7 @@ class AddressDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, address_id: int):
-        address = Address.objects.get(id=address_id, user=request.user)
+        address = get_object_or_404(Address, id=address_id, user=request.user)
         serializer = AddressSerializer(address, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         return Response(AddressSerializer(serializer.save()).data)

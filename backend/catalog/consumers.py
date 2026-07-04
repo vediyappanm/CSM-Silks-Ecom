@@ -8,14 +8,9 @@ from .realtime import ADMIN_CATALOG_GROUP, CATALOG_GROUP
 class CatalogRealtimeConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         self.user = self.scope.get("user") or AnonymousUser()
-        self.groups_to_join: list[str] = []
+        self.groups_to_join: list[str] = [CATALOG_GROUP]
 
-        if not self.user.is_authenticated:
-            await self.close(code=4401)
-            return
-
-        self.groups_to_join.append(CATALOG_GROUP)
-        if await self.user_is_admin():
+        if self.user.is_authenticated and await self.user_is_admin():
             self.groups_to_join.append(ADMIN_CATALOG_GROUP)
 
         for group in self.groups_to_join:

@@ -7,13 +7,16 @@ import {
   Boxes,
   Clock3,
   FileText,
+  LogOut,
   MapPin,
   PackageCheck,
   RefreshCw,
   RotateCcw,
+  Search,
   Send,
   ShieldCheck,
   ShoppingBag,
+  Star,
   Truck,
   Users,
 } from 'lucide-react';
@@ -21,9 +24,10 @@ import { AdminCatalogManager } from '@/features/admin/components/AdminCatalogMan
 import { ADMIN_STATUS_CLASS, ORDER_STATUS_LABEL, formatDateTime, latestTrackingEvent, lifecycleProgress, sortTrackingEvents } from '@/lib/orderLifecycle';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { connectOrderRealtime, type RealtimeStatus } from '@/lib/realtime';
-import type { AdminAuditLog, AdminCoupon, AdminInventoryRow, AdminShipment, Order, PaginatedResponse, ReturnRequest, User } from '@/types';
+import { useApp } from '@/store/AppContext';
+import type { AdminAuditLog, AdminCoupon, AdminInventoryRow, AdminReview, AdminShipment, Order, PaginatedResponse, ReturnRequest, User } from '@/types';
 
-type AdminPage = 'dashboard' | 'orders' | 'products' | 'inventory' | 'shipments' | 'coupons' | 'returns' | 'customers' | 'reports' | 'audit' | 'unsold';
+type AdminPage = 'dashboard' | 'orders' | 'products' | 'inventory' | 'shipments' | 'coupons' | 'returns' | 'customers' | 'reports' | 'audit' | 'unsold' | 'reviews';
 type Kpis = Record<string, number | string>;
 type AdminOrderRow = Partial<Order> & {
   id: number;
@@ -43,6 +47,26 @@ type WorkflowPayload = { action: string; provider: string; location: string; not
 type OrderPageInfo = Pick<PaginatedResponse<Order>, 'total' | 'page' | 'per_page' | 'pages'>;
 
 const ADMIN_ORDER_PAGE_SIZE = 25;
+const ADMIN_PAGE_HASH: Record<string, AdminPage> = {
+  dashboard: 'dashboard',
+  orders: 'orders',
+  products: 'products',
+  catalog: 'products',
+  inventory: 'inventory',
+  shipments: 'shipments',
+  coupons: 'coupons',
+  returns: 'returns',
+  customers: 'customers',
+  reports: 'reports',
+  audit: 'audit',
+  reviews: 'reviews',
+  unsold: 'unsold',
+};
+
+function pageFromHash(): AdminPage {
+  const key = window.location.hash.replace(/^#/, '').trim().toLowerCase();
+  return ADMIN_PAGE_HASH[key] || 'dashboard';
+}
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -146,12 +170,28 @@ function formatAdminNumber(value: number | string | undefined) {
 }
 
 export function Admin() {
-  const [page, setPage] = useState<AdminPage>('dashboard');
+  const { refreshSession } = useApp();
+  const [page, setPage] = useState<AdminPage>(() => pageFromHash());
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authed, setAuthed] = useState(false);
+  const [adminUser, setAdminUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(Boolean(api.tokens.getAccessToken()));
   const [loginError, setLoginError] = useState('');
+
+  const navigatePage = (next: AdminPage) => {
+    setPage(next);
+    const hash = `#${next}`;
+    if (window.location.hash !== hash) {
+      window.history.replaceState(null, '', hash);
+    }
+  };
+
+  useEffect(() => {
+    const onHashChange = () => setPage(pageFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -173,6 +213,7 @@ export function Admin() {
         if (!active) return;
         if (isAdminUser(user)) {
           setAuthed(true);
+          setAdminUser(user);
           return;
         }
         api.tokens.clearTokens();
@@ -193,10 +234,19 @@ export function Admin() {
 
   const login = async () => {
     setLoginError('');
+    const nextEmail = email.trim();
+    const nextPassword = password;
+    if (!nextEmail || !nextPassword) {
+      setLoginError('Enter admin email/username and password.');
+      return;
+    }
     try {
-      const session = await api.auth.adminLogin(email, password);
+      const session = await api.auth.adminLogin(nextEmail, nextPassword);
       if (!isAdminUser(session.user)) throw new Error('This account does not have admin access.');
+      setAdminUser(session.user);
       setAuthed(true);
+      await refreshSession();
+      if (!window.location.hash) window.history.replaceState(null, '', '#dashboard');
     } catch (err) {
       api.tokens.clearTokens();
       setAuthed(false);
@@ -204,10 +254,19 @@ export function Admin() {
     }
   };
 
+  const logout = () => {
+    api.tokens.clearTokens();
+    setAuthed(false);
+    setAdminUser(null);
+    setEmail('');
+    setPassword('');
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+
   if (checking) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--text)' }}>
-        <div className="chart-card" style={{ width: 420 }}>
+        <div className="chart-card admin-login-card">
           <div className="chart-title">Checking admin session...</div>
         </div>
       </div>
@@ -217,12 +276,23 @@ export function Admin() {
   if (!authed) {
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)', color: 'var(--text)' }}>
-        <div className="chart-card" style={{ width: 420 }}>
-          <div className="chart-title" style={{ marginBottom: 18 }}>CSM Admin Login</div>
-          {loginError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 12 }}>{loginError}</div>}
-          <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" style={adminInput} />
-          <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" style={adminInput} />
-          <button className="btn btn-gold" onClick={() => void login()}>Login</button>
+        <div className="chart-card admin-login-card">
+          <form
+            className="admin-login-form"
+            onSubmit={event => {
+              event.preventDefault();
+              void login();
+            }}
+          >
+            <div className="chart-title" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <ShieldCheck size={22} aria-hidden="true" />
+              CSM Admin Login
+            </div>
+            {loginError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 12 }} role="alert">{loginError}</div>}
+            <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email or username" autoComplete="username" aria-label="Admin email or username" style={adminInput} />
+            <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" autoComplete="current-password" aria-label="Admin password" style={adminInput} />
+            <button className="btn btn-gold" type="submit">Login</button>
+          </form>
         </div>
       </div>
     );
@@ -237,6 +307,7 @@ export function Admin() {
     { key: 'coupons', label: 'Coupons', icon: BadgePercent },
     { key: 'returns', label: 'Returns', icon: RotateCcw },
     { key: 'customers', label: 'Customers', icon: Users },
+    { key: 'reviews', label: 'Reviews', icon: Star },
     { key: 'reports', label: 'Reports', icon: FileText },
     { key: 'audit', label: 'Audit Logs', icon: ShieldCheck },
     { key: 'unsold', label: 'Stock Alerts', icon: AlertTriangle },
@@ -248,22 +319,31 @@ export function Admin() {
         <div className="admin-logo">
           <span className="admin-mark">CSM</span>
           <span className="admin-tag">Retailer Admin</span>
-          <div className="admin-version"><span className="v-dot" /> Django v1</div>
+          <div className="admin-version"><span className="v-dot" /> Production console</div>
         </div>
         <div className="admin-nav">
           <div className="nav-group">Operations</div>
           {nav.map(({ key, label, icon: Icon }) => (
-            <div key={key} className={`nav-item ${page === key ? 'active' : ''}`} onClick={() => setPage(key)}>
-              <Icon className="nav-icon" size={17} /> <span>{label}</span>
+            <div key={key} className={`nav-item ${page === key ? 'active' : ''}`} role="presentation">
+              <button type="button" className="nav-item-btn" onClick={() => navigatePage(key)}>
+                <Icon className="nav-icon" size={17} /> <span>{label}</span>
+              </button>
             </div>
           ))}
+        </div>
+        <div className="admin-sidebar-foot">
+          <button className="admin-logout-btn" onClick={logout}><LogOut size={16} /> Sign out</button>
         </div>
       </div>
 
       <div className="admin-main">
         <div className="admin-topbar">
-          <div className="admin-topbar-title">{page.charAt(0).toUpperCase() + page.slice(1)}</div>
-          <div className="live-chip"><span className="live-dot2" /> LIVE API</div>
+          <div className="admin-topbar-title">{nav.find(item => item.key === page)?.label || 'Dashboard'}</div>
+          <div className="admin-topbar-actions">
+            {adminUser && <span className="admin-user-chip">{adminUser.email || adminUser.full_name || 'Admin'}</span>}
+            <div className="live-chip"><span className="live-dot2" /> LIVE API</div>
+            <button className="admin-soft-btn" onClick={logout}><LogOut size={14} /> Sign out</button>
+          </div>
         </div>
         <div className="admin-content">
           {page === 'dashboard' && <AdminDashboard />}
@@ -274,6 +354,7 @@ export function Admin() {
           {page === 'coupons' && <AdminCoupons />}
           {page === 'returns' && <AdminReturns />}
           {page === 'customers' && <AdminCustomers />}
+          {page === 'reviews' && <AdminReviews />}
           {page === 'reports' && <AdminReports />}
           {page === 'audit' && <AdminAuditLogs />}
           {page === 'unsold' && <AdminUnsold />}
@@ -364,12 +445,18 @@ function AdminDashboard() {
 function AdminOrders() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
   const [orderPageInfo, setOrderPageInfo] = useState<OrderPageInfo>({ total: 0, page: 1, per_page: ADMIN_ORDER_PAGE_SIZE, pages: 0 });
   const [loadingMore, setLoadingMore] = useState(false);
   const loadOrdersPage = useCallback((page = 1, append = false) => {
     if (append) setLoadingMore(true);
-    return api.admin.orders({ page, per_page: ADMIN_ORDER_PAGE_SIZE }).then(data => {
+    return api.admin.orders({
+      page,
+      per_page: ADMIN_ORDER_PAGE_SIZE,
+      ...(statusFilter ? { status: statusFilter } : {}),
+    }).then(data => {
       setOrderPageInfo({ total: data.total, page: data.page, per_page: data.per_page, pages: data.pages || 0 });
       setOrders(prev => {
         if (!append) return data.items;
@@ -381,7 +468,7 @@ function AdminOrders() {
     }).finally(() => {
       if (append) setLoadingMore(false);
     });
-  }, []);
+  }, [statusFilter]);
   const load = useCallback(() => {
     return loadOrdersPage(1, false);
   }, [loadOrdersPage]);
@@ -401,22 +488,31 @@ function AdminOrders() {
     },
   }), []);
   const runWorkflow = async (order: Order, payload: WorkflowPayload) => {
-    const updated = await api.admin.workflowOrder(order.id, {
-      action: payload.action,
-      provider: payload.provider || 'manual',
-      location: payload.location || 'CSM Kanchipuram operations',
-      note: payload.note || defaultWorkflowNote(payload.action),
-    });
-    setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
-    setNotice(`${updated.order_number} moved to ${ORDER_STATUS_LABEL[updated.status] || updated.status}. Customer tracking log updated.`);
+    setError('');
+    try {
+      const updated = await api.admin.workflowOrder(order.id, {
+        action: payload.action,
+        provider: payload.provider || 'manual',
+        location: payload.location || 'CSM Kanchipuram operations',
+        note: payload.note || defaultWorkflowNote(payload.action),
+      });
+      setOrders(prev => prev.map(o => o.id === updated.id ? updated : o));
+      setNotice(`${updated.order_number} moved to ${ORDER_STATUS_LABEL[updated.status] || updated.status}. Customer tracking log updated.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update order workflow');
+    }
   };
   const downloadInvoice = async (order: Order) => {
-    const blob = await api.admin.orderInvoice(order.id);
-    saveBlob(blob, `invoice-${order.order_number}.html`);
+    try {
+      const blob = await api.admin.orderInvoice(order.id);
+      saveBlob(blob, `invoice-${order.order_number}.html`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to download invoice');
+    }
   };
   return (
     <div className="admin-stack">
-      {notice && <div className="admin-alert good">{notice}</div>}
+      {(notice || error) && <div className={`admin-alert ${error ? 'bad' : 'good'}`}>{error || notice}</div>}
       <div className="admin-panel-head">
         <div>
           <span className="admin-eyebrow">Fulfillment control</span>
@@ -424,6 +520,20 @@ function AdminOrders() {
           <p>Every action below writes a customer-visible tracking event and an admin audit log.</p>
         </div>
         <div className="admin-head-actions">
+          <label className="admin-field audit-filter">Status filter
+            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+              <option value="">All statuses</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="packed">Packed</option>
+              <option value="shipped">Shipped</option>
+              <option value="out_for_delivery">Out for delivery</option>
+              <option value="delivered">Delivered</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="return_initiated">Return initiated</option>
+              <option value="refunded">Refunded</option>
+            </select>
+          </label>
           <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live WebSocket' : realtimeStatus}</span>
           <button className="admin-primary-btn" onClick={load}><RefreshCw size={14} /> Refresh orders</button>
         </div>
@@ -552,6 +662,7 @@ function AdminInventory() {
   const [items, setItems] = useState<AdminInventoryRow[]>([]);
   const [adjustments, setAdjustments] = useState<Record<number, string>>({});
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     return api.admin.inventory().then(setItems).catch(() => setItems([]));
@@ -570,19 +681,24 @@ function AdminInventory() {
   const adjust = async (row: AdminInventoryRow) => {
     const delta = Number(adjustments[row.variant_id] || 0);
     if (!delta) return;
-    await api.admin.adjustInventory({
-      variant_id: row.variant_id,
-      quantity_delta: delta,
-      note: `Admin stock ${delta > 0 ? 'add' : 'reduce'} from operations UI`,
-    });
-    setAdjustments(prev => ({ ...prev, [row.variant_id]: '' }));
-    setNotice(`${row.sku} stock adjusted by ${delta}.`);
-    load();
+    setError('');
+    try {
+      await api.admin.adjustInventory({
+        variant_id: row.variant_id,
+        quantity_delta: delta,
+        note: `Admin stock ${delta > 0 ? 'add' : 'reduce'} from operations UI`,
+      });
+      setAdjustments(prev => ({ ...prev, [row.variant_id]: '' }));
+      setNotice(`${row.sku} stock adjusted by ${delta}.`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to adjust stock');
+    }
   };
 
   return (
     <div className="admin-stack">
-      {notice && <div className="admin-alert good">{notice}</div>}
+      {(notice || error) && <div className={`admin-alert ${error ? 'bad' : 'good'}`}>{error || notice}</div>}
       <div className="admin-panel-head">
         <div>
           <span className="admin-eyebrow">Stock control</span>
@@ -618,6 +734,9 @@ function AdminInventory() {
                 </td>
               </tr>
             ))}
+            {items.length === 0 && (
+              <tr><td colSpan={7}><div className="admin-empty-row">No inventory rows yet. Add products in Catalog first.</div></td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -630,6 +749,7 @@ function AdminShipments() {
   const [shipments, setShipments] = useState<AdminShipment[]>([]);
   const [form, setForm] = useState({ order: '', provider: 'manual', awb_number: '', tracking_url: '', status: 'created' as AdminShipment['status'], event_location: '', event_note: '' });
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
 
   const load = useCallback(() => {
@@ -658,23 +778,32 @@ function AdminShipments() {
 
   const saveShipment = async () => {
     if (!form.order) return;
-    const shipment = await api.admin.createShipment({
-      order: Number(form.order),
-      provider: form.provider,
-      awb_number: form.awb_number,
-      tracking_url: form.tracking_url,
-      status: form.status,
-      event_location: form.event_location,
-      event_note: form.event_note,
-    });
-    setNotice(`${shipment.order_number} shipment saved.`);
-    setForm(prev => ({ ...prev, event_location: '', event_note: '' }));
-    load();
+    setError('');
+    try {
+      const shipment = await api.admin.createShipment({
+        order: Number(form.order),
+        provider: form.provider,
+        awb_number: form.awb_number,
+        tracking_url: form.tracking_url,
+        status: form.status,
+        event_location: form.event_location,
+        event_note: form.event_note,
+      });
+      setNotice(`${shipment.order_number} shipment saved.`);
+      setForm(prev => ({ ...prev, event_location: '', event_note: '' }));
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save shipment');
+    }
   };
 
   const downloadShipmentFile = async (shipment: AdminShipment, kind: 'label' | 'manifest') => {
-    const blob = kind === 'label' ? await api.admin.shipmentLabel(shipment.id) : await api.admin.shipmentManifest(shipment.id);
-    saveBlob(blob, `${kind}-${shipment.order_number}.txt`);
+    try {
+      const blob = kind === 'label' ? await api.admin.shipmentLabel(shipment.id) : await api.admin.shipmentManifest(shipment.id);
+      saveBlob(blob, `${kind}-${shipment.order_number}.txt`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Unable to download ${kind}`);
+    }
   };
 
   return (
@@ -709,6 +838,7 @@ function AdminShipments() {
           <label className="admin-field wide">Customer update note<input value={form.event_note} onChange={e => setForm({ ...form, event_note: e.target.value })} placeholder="Package handed to courier / reached Chennai hub" /></label>
         </div>
         {notice && <div className="admin-alert good">{notice}</div>}
+        {error && <div className="admin-alert bad">{error}</div>}
         <button className="admin-primary-btn admin-submit" onClick={() => void saveShipment()}>Save shipment</button>
       </div>
       <div className="admin-form-card">
@@ -730,6 +860,7 @@ function AdminShipments() {
               </div>
             </div>
           ))}
+          {shipments.length === 0 && <div className="admin-empty-row">No shipments yet. Create one when an order is ready for courier handover.</div>}
         </div>
       </div>
     </div>
@@ -743,6 +874,8 @@ type CouponForm = {
   value: string;
   min_order_value: string;
   usage_limit: string;
+  starts_at: string;
+  expires_at: string;
   is_active: boolean;
 };
 
@@ -753,8 +886,18 @@ const emptyCouponForm: CouponForm = {
   value: '10',
   min_order_value: '0',
   usage_limit: '',
+  starts_at: '',
+  expires_at: '',
   is_active: true,
 };
+
+function toDateTimeLocal(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 function couponToForm(coupon: AdminCoupon): CouponForm {
   return {
@@ -764,6 +907,8 @@ function couponToForm(coupon: AdminCoupon): CouponForm {
     value: String(coupon.value || ''),
     min_order_value: String(coupon.min_order_value || '0'),
     usage_limit: coupon.usage_limit == null ? '' : String(coupon.usage_limit),
+    starts_at: toDateTimeLocal(coupon.starts_at),
+    expires_at: toDateTimeLocal(coupon.expires_at),
     is_active: coupon.is_active,
   };
 }
@@ -776,6 +921,8 @@ function formToCouponPayload(form: CouponForm): Partial<AdminCoupon> {
     value: form.value || '0',
     min_order_value: form.min_order_value || '0',
     usage_limit: form.usage_limit ? Number(form.usage_limit) : null,
+    starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
+    expires_at: form.expires_at ? new Date(form.expires_at).toISOString() : null,
     is_active: form.is_active,
   };
 }
@@ -826,9 +973,13 @@ function AdminCoupons() {
   };
 
   const toggleCoupon = async (coupon: AdminCoupon) => {
-    const updated = await api.admin.updateCoupon(coupon.id, { is_active: !coupon.is_active });
-    setCoupons(prev => prev.map(item => item.id === updated.id ? updated : item));
-    setNotice(`${updated.code} is now ${updated.is_active ? 'active' : 'paused'}.`);
+    try {
+      const updated = await api.admin.updateCoupon(coupon.id, { is_active: !coupon.is_active });
+      setCoupons(prev => prev.map(item => item.id === updated.id ? updated : item));
+      setNotice(`${updated.code} is now ${updated.is_active ? 'active' : 'paused'}.`);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : 'Unable to update coupon.');
+    }
   };
 
   return (
@@ -853,6 +1004,12 @@ function AdminCoupons() {
           </label>
           <label className="admin-field">Usage limit
             <input type="number" min="0" value={form.usage_limit} onChange={e => setForm({ ...form, usage_limit: e.target.value })} placeholder="Blank = unlimited" />
+          </label>
+          <label className="admin-field">Starts at
+            <input type="datetime-local" value={form.starts_at} onChange={e => setForm({ ...form, starts_at: e.target.value })} />
+          </label>
+          <label className="admin-field">Expires at
+            <input type="datetime-local" value={form.expires_at} onChange={e => setForm({ ...form, expires_at: e.target.value })} />
           </label>
           <label className="admin-field coupon-active-field">
             <span>Active coupon</span>
@@ -913,6 +1070,7 @@ function returnIsTerminal(status: ReturnRequest['status']) {
 function AdminReturns() {
   const [returns, setReturns] = useState<ReturnRequest[]>([]);
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
 
   const load = useCallback(() => {
@@ -931,14 +1089,19 @@ function AdminReturns() {
   }), [load]);
 
   const updateReturn = async (ret: ReturnRequest, status: ReturnRequest['status']) => {
-    const updated = await api.admin.updateReturn(ret.id, { status });
-    setReturns(prev => prev.map(item => item.id === updated.id ? updated : item));
-    setNotice(`${updated.order_number} return marked ${updated.status}.`);
+    setError('');
+    try {
+      const updated = await api.admin.updateReturn(ret.id, { status });
+      setReturns(prev => prev.map(item => item.id === updated.id ? updated : item));
+      setNotice(`${updated.order_number} return marked ${updated.status}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update return');
+    }
   };
 
   return (
     <div className="admin-stack">
-      {notice && <div className="admin-alert good">{notice}</div>}
+      {(notice || error) && <div className={`admin-alert ${error ? 'bad' : 'good'}`}>{error || notice}</div>}
       <div className="admin-panel-head">
         <div>
           <span className="admin-eyebrow">Return operations</span>
@@ -968,6 +1131,9 @@ function AdminReturns() {
                 </td>
               </tr>
             ))}
+            {returns.length === 0 && (
+              <tr><td colSpan={6}><div className="admin-empty-row">No return requests right now.</div></td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -1012,6 +1178,9 @@ function AdminCustomers() {
             {customers.map(c => (
               <tr key={c.id}><td>{c.name}</td><td>{c.phone || c.email}</td><td>{c.orders}</td><td>Rs {Number(c.spent || 0).toLocaleString('en-IN')}</td><td>{c.tier}</td></tr>
             ))}
+            {customers.length === 0 && (
+              <tr><td colSpan={5}><div className="admin-empty-row">No customers yet. They appear after the first order.</div></td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -1074,11 +1243,16 @@ function AdminAuditLogs() {
   const [logs, setLogs] = useState<AdminAuditLog[]>([]);
   const [actionFilter, setActionFilter] = useState('');
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [orderRealtimeStatus, setOrderRealtimeStatus] = useState<RealtimeStatus>('connecting');
   const [notice, setNotice] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 350);
+    return () => window.clearTimeout(timer);
+  }, [query]);
   const load = useCallback(() => {
-    return api.admin.auditLogs({ action: actionFilter, q: query.trim() }).then(setLogs).catch(() => setLogs([]));
-  }, [actionFilter, query]);
+    return api.admin.auditLogs({ action: actionFilter, q: debouncedQuery.trim() }).then(setLogs).catch(() => setLogs([]));
+  }, [actionFilter, debouncedQuery]);
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
   useEffect(() => connectOrderRealtime('/ws/orders/', {
     onStatus: setOrderRealtimeStatus,
@@ -1146,6 +1320,82 @@ function AdminAuditLogs() {
               <tr>
                 <td colSpan={6}><div className="admin-empty-row">No audit logs match the current filters.</div></td>
               </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AdminReviews() {
+  const [reviews, setReviews] = useState<AdminReview[]>([]);
+  const [publishedFilter, setPublishedFilter] = useState('');
+  const [query, setQuery] = useState('');
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const load = useCallback(() => {
+    return api.admin.reviews({
+      ...(publishedFilter ? { published: publishedFilter } : {}),
+      ...(query.trim() ? { q: query.trim() } : {}),
+    }).then(setReviews).catch(() => setReviews([]));
+  }, [publishedFilter, query]);
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+
+  const togglePublished = async (review: AdminReview) => {
+    setError('');
+    try {
+      const updated = await api.admin.updateReview(review.id, { is_published: !review.is_published });
+      setReviews(prev => prev.map(item => item.id === updated.id ? updated : item));
+      setNotice(`Review for ${updated.product_name} is now ${updated.is_published ? 'published' : 'hidden'}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update review');
+    }
+  };
+
+  return (
+    <div className="admin-stack">
+      {(notice || error) && <div className={`admin-alert ${error ? 'bad' : 'good'}`}>{error || notice}</div>}
+      <div className="admin-panel-head">
+        <div>
+          <span className="admin-eyebrow">Reputation control</span>
+          <h2>Product review moderation</h2>
+          <p>Publish or hide customer reviews. Hidden reviews are removed from product pages and ratings.</p>
+        </div>
+        <div className="admin-head-actions">
+          <button className="admin-soft-btn" onClick={() => void load()}><RefreshCw size={14} /> Refresh</button>
+        </div>
+      </div>
+      <div className="admin-table-toolbar">
+        <label className="admin-field audit-filter">Visibility
+          <select value={publishedFilter} onChange={e => setPublishedFilter(e.target.value)}>
+            <option value="">All reviews</option>
+            <option value="true">Published</option>
+            <option value="false">Hidden</option>
+          </select>
+        </label>
+        <label className="admin-search">
+          <Search size={16} />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search product or review text" />
+        </label>
+        <span>{reviews.length} review{reviews.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>Product</th><th>Customer</th><th>Rating</th><th>Review</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>
+            {reviews.map(review => (
+              <tr key={review.id}>
+                <td><strong>{review.product_name}</strong><span className="admin-muted-line">/{review.product_slug}</span></td>
+                <td>{review.customer}<span className="admin-muted-line">{review.customer_email || ''}</span></td>
+                <td>{'★'.repeat(review.rating)}{review.is_verified_purchase ? ' ✓' : ''}</td>
+                <td><strong>{review.title || 'Untitled'}</strong><span className="admin-muted-line">{review.body}</span></td>
+                <td><span className={`status-badge ${review.is_published ? 'st-delivered' : 'st-pending'}`}>{review.is_published ? 'Published' : 'Hidden'}</span></td>
+                <td><button onClick={() => void togglePublished(review)}>{review.is_published ? 'Hide' : 'Publish'}</button></td>
+              </tr>
+            ))}
+            {reviews.length === 0 && (
+              <tr><td colSpan={6}><div className="admin-empty-row">No reviews match the current filters.</div></td></tr>
             )}
           </tbody>
         </table>

@@ -17,7 +17,7 @@ interface AppState {
 }
 
 interface AppContextType extends AppState {
-  addToCart: (product: Product) => Promise<void>;
+  addToCart: (product: Product, quantity?: number) => Promise<boolean>;
   removeFromCart: (id: number) => Promise<void>;
   updateQty: (id: number, delta: number) => Promise<void>;
   toggleWishlist: (product: Product) => Promise<void>;
@@ -223,44 +223,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, [refreshNotifications, showToast, user]);
 
-  const addToCart = useCallback(async (product: Product) => {
+  const addToCart = useCallback(async (product: Product, quantity = 1): Promise<boolean> => {
     const vid = variantId(product);
     if (!api.tokens.getAccessToken()) {
       showToast('!', 'Login required', 'Sign in to add live inventory to your cart');
       redirectToLogin(window.location.pathname + window.location.search + window.location.hash);
-      return;
+      return false;
     }
     if (!vid) {
       showToast('!', 'SKU unavailable', 'This product does not have a sellable live variant');
-      return;
+      return false;
     }
+    const safeQty = Math.max(1, Math.min(quantity, 10));
     try {
-      const data = await api.cart.add(vid, 1);
+      const data = await api.cart.add(vid, safeQty);
       applyCartResponse(data);
-      showToast('OK', 'Added to Cart', `${product.name} added to your cart`);
+      showToast('OK', 'Added to Cart', `${product.name} x${safeQty} added to your cart`);
+      return true;
     } catch (err) {
       showToast('!', 'Cart Error', err instanceof Error ? err.message : 'Unable to add item');
+      return false;
     }
   }, [applyCartResponse, showToast]);
 
   const removeFromCart = useCallback(async (id: number) => {
     const item = cart.find(c => c.id === id || c.cart_item_id === id);
     if (api.tokens.getAccessToken() && item?.cart_item_id) {
-      const data = await api.cart.remove(item.cart_item_id);
-      applyCartResponse(data);
+      try {
+        const data = await api.cart.remove(item.cart_item_id);
+        applyCartResponse(data);
+      } catch (err) {
+        showToast('!', 'Cart Error', err instanceof Error ? err.message : 'Unable to remove item');
+      }
       return;
     }
     setCart([]);
     setServerTotals(null);
-  }, [applyCartResponse, cart]);
+  }, [applyCartResponse, cart, showToast]);
 
   const updateQty = useCallback(async (id: number, delta: number) => {
     const item = cart.find(c => c.id === id || c.cart_item_id === id);
     if (!item) return;
     const nextQty = Math.max(1, item.qty + delta);
     if (api.tokens.getAccessToken() && item.cart_item_id) {
-      const data = await api.cart.update(item.cart_item_id, nextQty);
-      applyCartResponse(data);
+      try {
+        const data = await api.cart.update(item.cart_item_id, nextQty);
+        applyCartResponse(data);
+      } catch (err) {
+        showToast('!', 'Cart Error', err instanceof Error ? err.message : 'Unable to update quantity');
+      }
       return;
     }
     showToast('!', 'Login required', 'Sign in to update your server cart');
@@ -275,16 +286,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }, 600);
       return;
     }
-    await api.wishlist.toggle(product.id).catch(() => null);
-    setWishlist(prev => {
-      const idx = prev.findIndex(w => w.id === product.id);
-      if (idx >= 0) {
+    try {
+      const data = await api.wishlist.toggle(product.id);
+      if (data.in_wishlist) {
+        setWishlist(prev => (prev.some(w => w.id === product.id) ? prev : [...prev, product]));
+        showToast('OK', 'Added to Wishlist', product.name);
+      } else {
+        setWishlist(prev => prev.filter(w => w.id !== product.id));
         showToast('OK', 'Removed from Wishlist', product.name);
-        return prev.filter((_, i) => i !== idx);
       }
-      showToast('OK', 'Added to Wishlist', product.name);
-      return [...prev, product];
-    });
+    } catch (err) {
+      showToast('!', 'Wishlist Error', err instanceof Error ? err.message : 'Unable to update wishlist');
+    }
   }, [showToast]);
 
   const isInWishlist = useCallback((id: number) => wishlist.some(w => w.id === id), [wishlist]);
@@ -310,22 +323,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
       redirectToLogin('/cart');
       return;
     }
-    const data = await api.cart.coupon(nextCode);
-    applyCartResponse(data);
-    showToast('OK', 'Coupon Applied', `${nextCode} updated your cart totals`);
+    try {
+      const data = await api.cart.coupon(nextCode);
+      applyCartResponse(data);
+      showToast('OK', 'Coupon Applied', `${nextCode} updated your cart totals`);
+    } catch (err) {
+      showToast('!', 'Coupon failed', err instanceof Error ? err.message : 'Unable to apply coupon');
+    }
   }, [applyCartResponse, showToast]);
 
   const removeCoupon = useCallback(async () => {
     if (!couponCode && !serverTotals?.discount) return;
-    if (api.tokens.getAccessToken()) {
-      const data = await api.cart.coupon('');
-      applyCartResponse(data);
-    } else {
-      setServerTotals(null);
-      setCouponCode('');
-      redirectToLogin('/cart');
+    try {
+      if (api.tokens.getAccessToken()) {
+        const data = await api.cart.coupon('');
+        applyCartResponse(data);
+      } else {
+        setServerTotals(null);
+        setCouponCode('');
+        redirectToLogin('/cart');
+        return;
+      }
+      showToast('OK', 'Coupon removed', 'Your cart total has been refreshed');
+    } catch (err) {
+      showToast('!', 'Coupon failed', err instanceof Error ? err.message : 'Unable to remove coupon');
     }
-    showToast('OK', 'Coupon removed', 'Your cart total has been refreshed');
   }, [applyCartResponse, couponCode, serverTotals, showToast]);
 
   const logout = useCallback(async () => {

@@ -6,13 +6,14 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.permissions import IsAdminUser, IsAuthenticated
+from accounts.permissions import IsStaffAdmin
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from analytics.audit import record_admin_audit
 from orders.models import Order
-from orders.services import confirm_paid_order
+from orders.services import capture_razorpay_payment, order_payment_is_captured
 from shipping.models import ShipmentEvent
 from shipping.services import record_tracking_event
 
@@ -27,7 +28,13 @@ class RazorpayOrderView(APIView):
     def post(self, request):
         serializer = RazorpayOrderCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        order = Order.objects.get(id=serializer.validated_data["order_id"], user=request.user)
+        order = Order.objects.select_related("payment").get(id=serializer.validated_data["order_id"], user=request.user)
+        if order.payment_method != Order.PaymentMethod.RAZORPAY:
+            return Response({"detail": "This order does not use Razorpay checkout"}, status=status.HTTP_400_BAD_REQUEST)
+        if order.status not in {Order.Status.PAYMENT_PENDING, Order.Status.PENDING}:
+            return Response({"detail": "This order is not awaiting payment"}, status=status.HTTP_400_BAD_REQUEST)
+        if order_payment_is_captured(order):
+            return Response({"detail": "Payment already captured for this order"}, status=status.HTTP_400_BAD_REQUEST)
         amount_paise = int(order.total_amount * 100)
         try:
             gateway_order = create_gateway_order(amount_paise, order.order_number, {"order_id": str(order.id), "user_id": str(request.user.id)})
@@ -65,15 +72,15 @@ class RazorpayVerifyView(APIView):
                 razorpay_order_id=data["razorpay_order_id"],
                 order__user=request.user,
             )
-            if payment.order.status == Order.Status.CANCELLED:
-                return Response({"detail": "Order reservation expired. Please place a fresh order."}, status=status.HTTP_400_BAD_REQUEST)
-            payment.razorpay_payment_id = data["razorpay_payment_id"]
-            payment.razorpay_signature = data["razorpay_signature"]
-            payment.status = Payment.Status.CAPTURED
-            payment.is_hmac_verified = True
-            payment.paid_at = timezone.now()
-            payment.save()
-            order = confirm_paid_order(payment.order)
+            try:
+                order = capture_razorpay_payment(
+                    payment,
+                    razorpay_payment_id=data["razorpay_payment_id"],
+                    razorpay_signature=data["razorpay_signature"],
+                    hmac_verified=True,
+                )
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"message": "Payment verified", "order_number": order.order_number, "order_id": order.id})
 
 
@@ -101,14 +108,17 @@ class RazorpayWebhookView(APIView):
         refund_entity = payload_root.get("refund", {}).get("entity", {})
         rz_order_id = entity.get("order_id")
         payment = Payment.objects.filter(razorpay_order_id=rz_order_id).select_related("order", "order__user").first()
-        if payment and event_type == "payment.captured" and payment.order.status != Order.Status.CANCELLED:
+        if payment and event_type == "payment.captured":
             with transaction.atomic():
                 payment = Payment.objects.select_for_update().select_related("order", "order__user").get(id=payment.id)
-                payment.status = Payment.Status.CAPTURED
-                payment.razorpay_payment_id = entity.get("id", payment.razorpay_payment_id)
-                payment.paid_at = timezone.now()
-                payment.save()
-                confirm_paid_order(payment.order)
+                try:
+                    capture_razorpay_payment(
+                        payment,
+                        razorpay_payment_id=entity.get("id", payment.razorpay_payment_id or ""),
+                        hmac_verified=True,
+                    )
+                except ValueError:
+                    pass
         elif payment and event_type == "payment.failed":
             payment.status = Payment.Status.FAILED
             payment.save(update_fields=["status", "updated_at"])
@@ -133,7 +143,7 @@ class RazorpayWebhookView(APIView):
 
 
 class RefundView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def post(self, request):
         serializer = RefundSerializer(data=request.data)

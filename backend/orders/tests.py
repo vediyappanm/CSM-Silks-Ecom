@@ -75,6 +75,28 @@ class CheckoutFlowTests(TestCase):
         cart_resp = self.client.get("/api/cart")
         self.assertEqual(cart_resp.json()["item_count"], 0)
 
+    def test_checkout_rejects_incomplete_saved_address(self):
+        incomplete = Address.objects.create(
+            user=self.user,
+            full_name="Incomplete Customer",
+            phone="",
+            address_line_1="",
+            city="",
+            state="",
+            pin_code="",
+        )
+        self.client.post("/api/cart", {"variant_id": self.variant.id, "quantity": 1}, format="json")
+
+        order_resp = self.client.post(
+            "/api/orders",
+            {"address_id": incomplete.id, "payment_method": "cod"},
+            format="json",
+        )
+
+        self.assertEqual(order_resp.status_code, 400)
+        self.assertIn("incomplete", order_resp.json()["detail"].lower())
+        self.assertEqual(Order.objects.count(), 0)
+
     def test_customer_order_history_is_paginated_for_realtime_screen_scope(self):
         for index in range(5):
             Order.objects.create(

@@ -139,6 +139,25 @@ export function Cart() {
           </div>
         </aside>
       </div>
+
+      {cart.length > 0 && (
+        <div className="mobile-action-bar" aria-label="Cart checkout actions">
+          <div className="mobile-action-bar-inner">
+            <div className="mobile-action-copy">
+              <strong>{fmt(totals.total)}</strong>
+              <small>{cart.length} item{cart.length === 1 ? '' : 's'} in bag</small>
+            </div>
+            <button
+              type="button"
+              className="mobile-action-btn"
+              onClick={() => navigate('/checkout')}
+              disabled={hasStockIssues}
+            >
+              {hasStockIssues ? 'Fix stock' : 'Checkout'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

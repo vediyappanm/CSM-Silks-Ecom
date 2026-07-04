@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, Clock3, ExternalLink, MessageCircle, PackageCheck, Phone, RefreshCw, Truck } from 'lucide-react';
 import { api } from '@/lib/api';
+import { STORE_PHONE_TEL, STORE_WHATSAPP_URL } from '@/lib/storeContact';
 import { ORDER_STATUS_LABEL, formatDateTime, latestTrackingEvent, lifecycleProgress, sortTrackingEvents } from '@/lib/orderLifecycle';
 import { connectOrderRealtime, type RealtimeStatus } from '@/lib/realtime';
 import { useApp } from '@/store/AppContext';
@@ -20,16 +21,27 @@ export function Tracking() {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>('connecting');
+  const defaultLookupId = orderId?.startsWith('CSM-') ? orderId : '';
 
   const fetchOrder = useCallback(async (withSpinner = false) => {
     if (!orderId) return;
     if (withSpinner) setLoading(true);
     try {
-      const result = await api.orders.get(orderId);
-      setOrder(result);
-      setLastRefreshed(new Date().toISOString());
-    } catch {
+      if (api.tokens.getAccessToken()) {
+        const result = await api.orders.get(orderId);
+        setOrder(result);
+        setLookupError('');
+        setLastRefreshed(new Date().toISOString());
+        return;
+      }
       setOrder(null);
+      setLookupError('Sign in to view this order, or track with order number and phone below.');
+    } catch {
+      if (api.tokens.getAccessToken()) {
+        setOrder(null);
+      } else {
+        setLookupError('Sign in to view this order, or track with order number and phone below.');
+      }
     } finally {
       if (withSpinner) setLoading(false);
     }
@@ -70,7 +82,7 @@ export function Tracking() {
 
   const trackOrder = async (event: FormEvent) => {
     event.preventDefault();
-    const identifier = lookupIdentifier.trim();
+    const identifier = (lookupIdentifier || defaultLookupId).trim();
     const phone = lookupPhone.trim();
     if (!identifier || !phone) {
       setLookupError('Order number/AWB and phone are required');
@@ -105,7 +117,7 @@ export function Tracking() {
         <h1>Order tracking</h1>
       </div>
       <div className="track-lookup-grid">
-        <label>Order number / AWB<input value={lookupIdentifier} onChange={e => setLookupIdentifier(e.target.value)} placeholder="Enter order number or AWB" /></label>
+        <label>Order number / AWB<input value={lookupIdentifier || defaultLookupId} onChange={e => setLookupIdentifier(e.target.value)} placeholder="Enter order number or AWB" /></label>
         <label>Phone<input value={lookupPhone} onChange={e => setLookupPhone(e.target.value)} placeholder="+91..." /></label>
         <button className="btn btn-gold" type="submit" disabled={lookupLoading}>{lookupLoading ? 'Tracking...' : 'Track order'}</button>
       </div>
@@ -152,10 +164,10 @@ export function Tracking() {
   return (
     <div className="tracking-page">
       <div className="tracking-wrap">
-        <div className="track-back" onClick={() => navigate('/orders')}>
+        <button type="button" className="track-back" onClick={() => navigate('/orders')}>
           <ArrowLeft size={18} />
           <span>Orders</span>
-        </div>
+        </button>
 
         <div className="track-header">
           <div className="track-id-row">
@@ -228,9 +240,9 @@ export function Tracking() {
 
         <div className="track-support-actions">
           <button className="btn btn-ghost" onClick={resetTracking}>Track another order</button>
-          <a className="btn btn-ghost" href="tel:+919876543210"><Phone size={14} /> Call Support</a>
+          <a className="btn btn-ghost" href={`tel:${STORE_PHONE_TEL}`}><Phone size={14} /> Call Support</a>
           {order.tracking_url && <a className="btn btn-ghost" href={order.tracking_url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open courier tracking</a>}
-          <a className="btn btn-wa" href={`https://wa.me/919876543210?text=Hi!%20I%20need%20help%20with%20order%20${order.order_number}`} target="_blank" rel="noreferrer"><MessageCircle size={14} /> WhatsApp Support</a>
+          <a className="btn btn-wa" href={`${STORE_WHATSAPP_URL}?text=Hi!%20I%20need%20help%20with%20order%20${order.order_number}`} target="_blank" rel="noreferrer"><MessageCircle size={14} /> WhatsApp Support</a>
         </div>
       </div>
     </div>

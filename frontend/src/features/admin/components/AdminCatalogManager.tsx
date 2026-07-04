@@ -1,18 +1,21 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   Boxes,
   CheckCircle2,
   ImagePlus,
   Layers3,
   PackagePlus,
+  Pencil,
   RefreshCw,
   Save,
   Search,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { ProductVisual } from '@/ui/components';
+import { editFormFromProduct, primaryVariantId, type AdminEditForm } from '@/lib/adminCatalog';
 import type { AdminProductQuickCreatePayload, CatalogCategory, CatalogCollection, Product } from '@/types';
 
 type CatalogTab = 'products' | 'add' | 'collections';
@@ -40,6 +43,8 @@ type ProductForm = {
   is_featured: boolean;
   blouse_included: boolean;
 };
+
+const CATALOG_PAGE_SIZE = 25;
 
 const initialProductForm: ProductForm = {
   name: '',
@@ -82,31 +87,48 @@ export function AdminCatalogManager() {
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editForm, setEditForm] = useState<AdminEditForm | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
 
-  const loadCatalog = async () => {
-    setLoading(true);
+  const loadCatalog = useCallback(async (pageNum = 1, append = false) => {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
       const [productData, categoryData, collectionData] = await Promise.all([
-        api.admin.products(),
+        api.admin.products({ page: pageNum, per_page: CATALOG_PAGE_SIZE }),
         api.admin.categories(),
         api.admin.collections(),
       ]);
-      setProducts(productData.items);
+      setProducts(prev => {
+        if (!append) return productData.items;
+        const known = new Set(prev.map(item => item.id));
+        return [...prev, ...productData.items.filter(item => !known.has(item.id))];
+      });
+      setPage(productData.page);
+      setTotalProducts(productData.total);
+      setTotalPages(productData.pages || 0);
       setCategories(categoryData);
       setCollections(collectionData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load catalog');
+      if (!append) setProducts([]);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    const id = window.setTimeout(() => void loadCatalog(), 0);
+    const id = window.setTimeout(() => void loadCatalog(1, false), 0);
     return () => window.clearTimeout(id);
-  }, []);
+  }, [loadCatalog]);
 
   const realtimeStatus = useCatalogLiveRefresh({
     onUpdate: message => {
@@ -115,7 +137,7 @@ export function AdminCatalogManager() {
           ? `Live catalog update received for ${message.product.name}.`
           : 'Live catalog update received.',
       );
-      void loadCatalog();
+      void loadCatalog(1, false);
     },
   });
 
@@ -180,11 +202,10 @@ export function AdminCatalogManager() {
         throw new Error('Name, category, price, and MRP are required.');
       }
       const created = await api.admin.createProductQuick(payload);
-      setProducts(prev => [created, ...prev]);
       setForm(initialProductForm);
       setNotice(`${created.name} is live in the customer catalog with ${created.available_qty || 0} stock.`);
       setTab('products');
-      void loadCatalog();
+      void loadCatalog(1, false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to create product');
     } finally {
@@ -231,6 +252,92 @@ export function AdminCatalogManager() {
     }
   };
 
+  const startEdit = async (product: Product) => {
+    setError('');
+    setNotice('');
+    setEditingProduct(product);
+    setEditForm(editFormFromProduct(product));
+    setEditLoading(true);
+    try {
+      const fullProduct = await api.admin.getProduct(product.id);
+      setEditingProduct(fullProduct);
+      setEditForm(editFormFromProduct(fullProduct));
+      window.setTimeout(() => {
+        document.querySelector('.admin-edit-modal')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load product for editing');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingProduct(null);
+    setEditForm(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editingProduct || !editForm) return;
+    const price = Number(editForm.price);
+    const mrp = Number(editForm.mrp);
+    const stockQty = Number(editForm.stock_qty);
+    if (!editForm.name.trim()) {
+      setError('Product name is required.');
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(mrp) || mrp <= 0) {
+      setError('Enter valid selling price and MRP.');
+      return;
+    }
+    if (!Number.isFinite(stockQty) || stockQty < 0) {
+      setError('Enter a valid stock quantity.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.admin.updateProduct(editingProduct.id, {
+        name: editForm.name.trim(),
+        hook: editForm.hook.trim(),
+        deal_label: editForm.deal_label.trim(),
+        is_featured: editForm.is_featured,
+        is_active: editForm.is_active,
+        base_price: price,
+        base_mrp: mrp,
+      });
+      const variantId = primaryVariantId(editingProduct);
+      if (variantId) {
+        await api.admin.updateVariant(variantId, {
+          price,
+          mrp,
+          stock_qty: stockQty,
+        });
+      }
+      setProducts(prev => prev.map(item => (item.id === updated.id ? { ...item, ...updated } : item)));
+      setNotice(`${updated.name} updated successfully.`);
+      cancelEdit();
+      void loadCatalog(1, false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to update product');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deactivateProduct = async (product: Product) => {
+    if (!window.confirm(`Deactivate "${product.name}"? It will disappear from the customer store.`)) return;
+    setError('');
+    try {
+      await api.admin.deleteProduct(product.id);
+      setProducts(prev => prev.filter(item => item.id !== product.id));
+      if (editingProduct?.id === product.id) cancelEdit();
+      setNotice(`${product.name} deactivated from the catalog.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to deactivate product');
+    }
+  };
+
   const totalStock = products.reduce((sum, product) => sum + Number(product.available_qty || 0), 0);
   const activeCount = products.filter(product => Number(product.available_qty || 0) > 0).length;
   const featuredCount = products.filter(product => product.is_featured).length;
@@ -241,11 +348,11 @@ export function AdminCatalogManager() {
         <div>
           <span className="admin-eyebrow">Catalog operations</span>
           <h2>Products, collections, and live stock</h2>
-          <p>Create a SKU with stock and image once. Customers see it immediately in search, women, men, and product detail pages.</p>
+          <p>Create, edit, and deactivate SKUs. Changes sync to the customer storefront in real time.</p>
         </div>
         <div className="admin-head-actions">
           <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live catalog' : realtimeStatus}</span>
-          <button className="admin-soft-btn" onClick={() => void loadCatalog()} disabled={loading}>
+          <button className="admin-soft-btn" onClick={() => void loadCatalog(1, false)} disabled={loading}>
             <RefreshCw size={16} /> Refresh
           </button>
           <button className="admin-primary-btn" onClick={() => setTab('add')}>
@@ -278,7 +385,7 @@ export function AdminCatalogManager() {
       {tab === 'products' && (
         <div className="admin-stack">
           <div className="admin-metric-row">
-            <div className="admin-mini-metric"><span>Total products</span><strong>{products.length}</strong></div>
+            <div className="admin-mini-metric"><span>Loaded products</span><strong>{products.length} / {totalProducts}</strong></div>
             <div className="admin-mini-metric"><span>Buyable SKUs</span><strong>{activeCount}</strong></div>
             <div className="admin-mini-metric"><span>Available stock</span><strong>{totalStock}</strong></div>
             <div className="admin-mini-metric"><span>Featured</span><strong>{featuredCount}</strong></div>
@@ -292,7 +399,7 @@ export function AdminCatalogManager() {
           </div>
           <div className="admin-table-wrap">
             <table className="admin-table catalog-table">
-              <thead><tr><th>Product</th><th>Collection</th><th>Variant</th><th>Price</th><th>Stock</th><th>Status</th></tr></thead>
+              <thead><tr><th>Product</th><th>Collection</th><th>Variant</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr></thead>
               <tbody>
                 {filteredProducts.map(product => {
                   const variant = product.variants?.[0];
@@ -318,13 +425,56 @@ export function AdminCatalogManager() {
                         {product.mrp > product.price && <span className="admin-muted-line">{inr(product.mrp)} MRP</span>}
                       </td>
                       <td>{stock}</td>
-                      <td><span className={`status-badge ${stock > 0 ? 'st-delivered' : 'st-pending'}`}>{stock > 0 ? 'Live' : 'Out'}</span></td>
+                      <td><span className={`status-badge ${stock > 0 && product.is_active !== false ? 'st-delivered' : 'st-pending'}`}>{stock > 0 && product.is_active !== false ? 'Live' : 'Out'}</span></td>
+                      <td>
+                        <div className="admin-row-actions">
+                          <button type="button" onClick={() => void startEdit(product)} disabled={editLoading}>
+                            <Pencil size={14} /> {editLoading && editingProduct?.id === product.id ? 'Loading...' : 'Edit'}
+                          </button>
+                          <button type="button" onClick={() => void deactivateProduct(product)}><Trash2 size={14} /> Deactivate</button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
+                {!loading && filteredProducts.length === 0 && (
+                  <tr><td colSpan={7}><div className="admin-empty-row">No products match your search. Add a product to publish to the store.</div></td></tr>
+                )}
               </tbody>
             </table>
           </div>
+          {page < totalPages && (
+            <div className="admin-load-more-row">
+              <span>Showing {products.length} of {totalProducts} products</span>
+              <button className="admin-soft-btn" onClick={() => void loadCatalog(page + 1, true)} disabled={loadingMore}>
+                <RefreshCw size={14} /> {loadingMore ? 'Loading...' : 'Load more products'}
+              </button>
+            </div>
+          )}
+
+          {editingProduct && editForm && (
+            <div className="admin-edit-modal" role="dialog" aria-modal="true" aria-label={`Edit ${editingProduct.name}`}>
+              <div className="admin-form-card admin-edit-panel">
+                <div className="chart-title chart-title-between">
+                  <span><Pencil size={18} /> Edit {editingProduct.name}</span>
+                  <button type="button" className="admin-soft-btn" onClick={cancelEdit}>Cancel</button>
+                </div>
+                <div className="admin-form-grid">
+                  <label className="admin-field wide">Product name<input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></label>
+                  <label className="admin-field wide">Selling line<input value={editForm.hook} onChange={e => setEditForm({ ...editForm, hook: e.target.value })} /></label>
+                  <label className="admin-field">Deal label<input value={editForm.deal_label} onChange={e => setEditForm({ ...editForm, deal_label: e.target.value })} /></label>
+                  <label className="admin-field">Selling price<input type="number" min="0" step="0.01" value={editForm.price} onChange={e => setEditForm({ ...editForm, price: e.target.value })} /></label>
+                  <label className="admin-field">MRP<input type="number" min="0" step="0.01" value={editForm.mrp} onChange={e => setEditForm({ ...editForm, mrp: e.target.value })} /></label>
+                  <label className="admin-field">Stock qty<input type="number" min="0" value={editForm.stock_qty} onChange={e => setEditForm({ ...editForm, stock_qty: e.target.value })} /></label>
+                  <label className="admin-check"><input type="checkbox" checked={editForm.is_featured} onChange={e => setEditForm({ ...editForm, is_featured: e.target.checked })} /> Featured on home</label>
+                  <label className="admin-check"><input type="checkbox" checked={editForm.is_active} onChange={e => setEditForm({ ...editForm, is_active: e.target.checked })} /> Active in store</label>
+                </div>
+                <button type="button" className="admin-primary-btn admin-submit" onClick={() => void saveEdit()} disabled={saving}>
+                  <Save size={16} /> {saving ? 'Saving...' : 'Save product changes'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -424,6 +574,7 @@ export function AdminCatalogManager() {
                   {collection.is_featured && <span className="status-badge st-delivered">Featured</span>}
                 </div>
               ))}
+              {collections.length === 0 && <div className="admin-empty-row">No collections yet.</div>}
             </div>
           </div>
         </div>

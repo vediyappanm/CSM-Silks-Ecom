@@ -15,6 +15,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { useApp } from '@/store/AppContext';
 
 type AuthMode = 'login' | 'signup';
@@ -33,7 +34,7 @@ type OTPDeliveryState = {
 
 const OTP_LENGTH = 6;
 const RESEND_SECONDS = 30;
-const AUTH_IMAGE_URL = 'https://images.pexels.com/photos/27575174/pexels-photo-27575174.jpeg?auto=compress&cs=tinysrgb&w=1200';
+const AUTH_IMAGE_URL = 'https://picsum.photos/seed/csm-auth-silk/1200/1600';
 
 function cleanPhone(value: string) {
   const raw = value.trim();
@@ -61,6 +62,8 @@ function safeRedirect(value: string | null) {
   return value;
 }
 
+const FRONTEND_GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
 export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -79,6 +82,11 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resendIn, setResendIn] = useState(0);
+  const [googleClientId, setGoogleClientId] = useState(FRONTEND_GOOGLE_CLIENT_ID);
+  const [googleEnabled, setGoogleEnabled] = useState(Boolean(FRONTEND_GOOGLE_CLIENT_ID));
+  const [otpDevFallbackEnabled, setOtpDevFallbackEnabled] = useState(false);
+  const [otpDeliveryConfigured, setOtpDeliveryConfigured] = useState(false);
+  const [devOtp, setDevOtp] = useState('');
 
   const isSignup = mode === 'signup';
   const normalizedPhone = cleanPhone(phone);
@@ -86,6 +94,14 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
   const subcopy = isSignup
     ? 'Save your profile, sync wishlist, earn loyalty points, and checkout faster with OTP-secured access.'
     : 'Use your phone number with SMS or email OTP backup to continue shopping, tracking, returns, rewards, and invoices securely.';
+  const phoneStepCopy = isSignup
+    ? 'We will send a one-time password to verify your phone and email.'
+    : otpDevFallbackEnabled
+      ? 'Enter your mobile number. In development, the OTP code appears on screen when live SMS/email is not configured.'
+      : otpDeliveryConfigured
+        ? 'We will send a one-time password through SMS or email when available for your account.'
+        : 'Enter your mobile number. OTP delivery must be configured by the store admin before login works.';
+  const showGoogle = Boolean(googleClientId && googleEnabled);
   const deliveredBy = [
     delivery?.sms_sent ? 'SMS' : '',
     delivery?.email_sent ? `email${delivery.email_masked ? ` (${delivery.email_masked})` : ''}` : '',
@@ -97,11 +113,35 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
     return () => window.clearTimeout(timer);
   }, [resendIn]);
 
+  useEffect(() => {
+    let active = true;
+    const loadAuthConfig = async () => {
+      try {
+        const config = await api.auth.config();
+        if (!active) return;
+        const clientId = config.google_client_id || FRONTEND_GOOGLE_CLIENT_ID;
+        setGoogleClientId(clientId);
+        setGoogleEnabled(Boolean(config.google_oauth_enabled && clientId));
+        setOtpDevFallbackEnabled(Boolean(config.otp_dev_fallback_enabled));
+        setOtpDeliveryConfigured(Boolean(config.otp_delivery_configured));
+      } catch {
+        if (!active) return;
+        setGoogleClientId(FRONTEND_GOOGLE_CLIENT_ID);
+        setGoogleEnabled(Boolean(FRONTEND_GOOGLE_CLIENT_ID));
+      }
+    };
+    void loadAuthConfig();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const resetForMode = (nextMode: AuthMode) => {
     setMode(nextMode);
     setStep('phone');
     setOtp('');
     setDelivery(null);
+    setDevOtp('');
     setError('');
     setResendIn(0);
   };
@@ -139,6 +179,7 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
       const emailForOtp = email.trim().toLowerCase();
       const response = await api.auth.sendOtp(normalizedPhone, isSignup || emailForOtp ? emailForOtp : undefined);
       setDelivery(response);
+      setDevOtp(response.dev_otp || '');
       setStep('otp');
       setResendIn(RESEND_SECONDS);
       const channels = [
@@ -252,7 +293,7 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
           <div className="auth-benefits">
             <div><ShieldCheck size={18} /><span>OTP verified phone login</span></div>
             <div><Sparkles size={18} /><span>Loyalty points after delivery</span></div>
-            <div><MessageCircle size={18} /><span>Email and SMS OTP delivery</span></div>
+            <div><MessageCircle size={18} /><span>Google or email/SMS OTP sign-in</span></div>
           </div>
         </section>
 
@@ -272,12 +313,26 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
             <h2>{step === 'phone' ? (isSignup ? 'Start with your details' : 'Enter mobile number') : 'Verify OTP'}</h2>
             <p>
               {step === 'phone'
-                ? 'We will send a one-time password through the live SMS and email channels available for your account.'
+                ? phoneStepCopy
                 : deliveredBy
                   ? `OTP sent to ${normalizedPhone} by ${deliveredBy}.`
-                  : `OTP delivery confirmed for ${normalizedPhone}.`}
+                  : devOtp
+                    ? `Development OTP generated for ${normalizedPhone}.`
+                    : `OTP delivery confirmed for ${normalizedPhone}.`}
             </p>
           </div>
+
+          {step === 'phone' && showGoogle && (
+            <div className="auth-google-block">
+              <GoogleSignInButton
+                clientId={googleClientId}
+                label={isSignup ? 'signup_with' : 'continue_with'}
+                disabled={loading}
+                nextPath={nextPath}
+              />
+              <div className="auth-divider"><span>or continue with OTP</span></div>
+            </div>
+          )}
 
           {step === 'phone' ? (
             <div className="auth-form">
@@ -322,6 +377,12 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
 
               {error && <div className="auth-error" role="alert">{error}</div>}
 
+              {otpDevFallbackEnabled && !otpDeliveryConfigured && (
+                <div className="auth-dev-hint" role="note">
+                  Local development mode: OTP will be shown on screen after you tap Send OTP. Test phone <strong>+918888888888</strong> is seeded in the demo database.
+                </div>
+              )}
+
               <button type="button" className="auth-primary" onClick={() => void sendOtp()} disabled={loading}>
                 {loading ? <Loader2 className="spin" size={18} /> : <LockKeyhole size={18} />}
                 Send OTP
@@ -351,6 +412,12 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
                 <div className="auth-delivery">
                   {delivery.sms_sent && <span>SMS sent</span>}
                   {delivery.email_sent && <span>Email sent{delivery.email_masked ? ` to ${delivery.email_masked}` : ''}</span>}
+                </div>
+              )}
+
+              {devOtp && (
+                <div className="auth-dev-otp" role="status">
+                  Development OTP: <strong>{devOtp}</strong>
                 </div>
               )}
 

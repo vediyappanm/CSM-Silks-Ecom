@@ -1,4 +1,5 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { resolveAssetUrl } from '@/lib/api';
 import type { Product } from '@/types';
 
 interface ProductVisualProps {
@@ -10,7 +11,12 @@ interface ProductVisualProps {
 
 export function ProductVisual({ product, label = 'CSM', className = '', imageUrl }: ProductVisualProps) {
   const colors = product?.colors?.length ? product.colors : ['#7a1e1e', '#c4923a', '#0f5b45'];
-  const visualUrl = imageUrl || product?.images?.[0];
+  const visualUrl = resolveAssetUrl(imageUrl || product?.images?.[0]);
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => {
+    setImageFailed(false);
+  }, [visualUrl]);
+  const showPhoto = Boolean(visualUrl) && !imageFailed;
   const style = {
     '--pv-a': colors[0] || '#7a1e1e',
     '--pv-b': colors[1] || '#c4923a',
@@ -18,9 +24,14 @@ export function ProductVisual({ product, label = 'CSM', className = '', imageUrl
   } as CSSProperties;
 
   return (
-    <div className={`product-visual ${visualUrl ? 'has-photo' : ''} ${className}`} style={style}>
-      {visualUrl ? (
-        <img src={visualUrl} alt={product?.name || 'CSM silk textile'} loading="lazy" />
+    <div className={`product-visual ${showPhoto ? 'has-photo' : ''} ${className}`} style={style}>
+      {showPhoto ? (
+        <img
+          src={visualUrl}
+          alt={product?.name || 'CSM silk textile'}
+          loading="lazy"
+          onError={() => setImageFailed(true)}
+        />
       ) : (
         <>
           <div className="product-visual-weave" />

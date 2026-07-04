@@ -99,3 +99,100 @@ class CatalogRealtimeTests(TestCase):
         self.assertEqual(payload["type"], "catalog.product.created")
         self.assertEqual(payload["product"]["name"], "Live Published Saree")
         self.assertEqual(payload["product"]["available_qty"], 6)
+
+
+class AdminCatalogCrudTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username="admin",
+            email="admin@csmsilks.com",
+            password="admin123",
+            is_staff=True,
+            role="admin",
+        )
+        self.category = Category.objects.create(name="Kurta", slug="kurta", gender="men")
+        self.product = Product.objects.create(
+            name="Ivory Silk Kurta Wedding Set",
+            slug="ivory-silk-kurta-wedding-set",
+            category=self.category,
+            gender="men",
+            hook="Handwoven silk kurta for wedding celebrations",
+            deal_label="Wedding special",
+            base_price=8990,
+            base_mrp=12990,
+            is_active=True,
+            is_featured=True,
+        )
+        self.variant = ProductVariant.objects.create(
+            product=self.product,
+            sku="KURTA-IVORY-1",
+            price=8990,
+            mrp=12990,
+            stock_qty=12,
+            reorder_level=2,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def test_admin_product_detail_returns_existing_fields(self):
+        response = self.client.get(f"/api/admin/products/{self.product.id}")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["name"], "Ivory Silk Kurta Wedding Set")
+        self.assertEqual(data["hook"], "Handwoven silk kurta for wedding celebrations")
+        self.assertEqual(data["deal_label"], "Wedding special")
+        self.assertEqual(data["is_featured"], True)
+        self.assertEqual(data["is_active"], True)
+        self.assertEqual(str(data["price"]), "8990.00")
+        self.assertEqual(str(data["mrp"]), "12990.00")
+        self.assertEqual(len(data["variants"]), 1)
+        self.assertEqual(data["variants"][0]["id"], self.variant.id)
+        self.assertEqual(data["variants"][0]["stock_qty"], 12)
+        self.assertEqual(data["variant_id"], self.variant.id)
+
+    def test_admin_product_detail_requires_staff(self):
+        guest = APIClient()
+        response = guest.get(f"/api/admin/products/{self.product.id}")
+        self.assertEqual(response.status_code, 401)
+
+    def test_admin_patch_product_and_variant_round_trip(self):
+        product_response = self.client.patch(
+            f"/api/admin/products/{self.product.id}",
+            {
+                "name": "Ivory Silk Kurta Updated",
+                "hook": "Updated selling line",
+                "deal_label": "Festive offer",
+                "is_featured": False,
+                "is_active": True,
+                "base_price": "9490.00",
+                "base_mrp": "13490.00",
+            },
+            format="json",
+        )
+        self.assertEqual(product_response.status_code, 200)
+        variant_response = self.client.patch(
+            f"/api/admin/variants/{self.variant.id}",
+            {"price": "9490.00", "mrp": "13490.00", "stock_qty": 18},
+            format="json",
+        )
+        self.assertEqual(variant_response.status_code, 200)
+
+        detail = self.client.get(f"/api/admin/products/{self.product.id}").json()
+        self.assertEqual(detail["name"], "Ivory Silk Kurta Updated")
+        self.assertEqual(detail["hook"], "Updated selling line")
+        self.assertEqual(detail["deal_label"], "Festive offer")
+        self.assertEqual(detail["is_featured"], False)
+        self.assertEqual(str(detail["price"]), "9490.00")
+        self.assertEqual(str(detail["mrp"]), "13490.00")
+        self.assertEqual(detail["variants"][0]["stock_qty"], 18)
+
+    def test_admin_product_list_includes_active_flag(self):
+        response = self.client.get("/api/admin/products")
+
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        row = next(item for item in items if item["id"] == self.product.id)
+        self.assertEqual(row["name"], "Ivory Silk Kurta Wedding Set")
+        self.assertEqual(row["is_active"], True)
+        self.assertEqual(row["variant_id"], self.variant.id)

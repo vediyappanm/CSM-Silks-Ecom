@@ -125,6 +125,7 @@ class ProductListSerializer(serializers.ModelSerializer):
             "default_variant_id",
             "variant_id",
             "available_qty",
+            "is_active",
             "is_featured",
             "is_gi_tagged",
             "assured",

@@ -5,7 +5,7 @@ import { useApp } from '@/store/AppContext';
 
 export function WishlistPage() {
   const navigate = useNavigate();
-  const { wishlist } = useApp();
+  const { wishlist, isAuthed } = useApp();
 
   return (
     <div className="wishlist-page">
@@ -19,11 +19,20 @@ export function WishlistPage() {
         </div>
         {wishlist.length === 0 ? (
           <div className="cart-empty">
-            <Heart size={58} />
+            <Heart size={58} aria-hidden="true" />
             <div className="cart-empty-title">No saved textiles yet</div>
-            <p className="cart-empty-sub">Save products while browsing so customers can compare later.</p>
-            <button className="btn btn-primary" onClick={() => navigate('/womens')}>Browse women</button>
-            <button className="btn btn-secondary" onClick={() => navigate('/mens')}>Browse men</button>
+            <p className="cart-empty-sub">
+              {isAuthed
+                ? 'Save products while browsing so you can compare and buy later.'
+                : 'Sign in to save products to your wishlist, or browse the catalog now.'}
+            </p>
+            <button type="button" className="btn btn-primary" onClick={() => navigate('/womens')}>Browse women</button>
+            <button type="button" className="btn btn-secondary" onClick={() => navigate('/mens')}>Browse men</button>
+            {!isAuthed && (
+              <button type="button" className="btn btn-secondary" onClick={() => navigate('/login?next=/wishlist')}>
+                Sign in to save
+              </button>
+            )}
           </div>
         ) : (
           <div className="pg">

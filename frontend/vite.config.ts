@@ -9,6 +9,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
   server: {
     host: "::",
     port: 5173,
@@ -22,6 +26,10 @@ export default defineConfig({
         target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,
+      },
+      '/media': {
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:8000',
+        changeOrigin: true,
       },
     },
   },

@@ -232,7 +232,7 @@ PRODUCTS = [
         "zari": "Thread Embroidery",
         "featured": True,
         "deal": "Limited Stock",
-        "image": 35542190,
+        "image": 7671168,
         "rating": "4.4",
         "sold": 89,
     },
@@ -252,7 +252,7 @@ PRODUCTS = [
         "zari": "Thread Embroidery",
         "featured": True,
         "deal": "Wedding Store Deal",
-        "image": 19673009,
+        "image": 6068960,
         "rating": "4.7",
         "sold": 72,
     },
@@ -471,7 +471,8 @@ class Command(BaseCommand):
         return user
 
     def _pexels_image(self, photo_id: int) -> str:
-        return f"https://images.pexels.com/photos/{photo_id}/pexels-photo-{photo_id}.jpeg?auto=compress&cs=tinysrgb&w=1000"
+        # Stable placeholder photos (picsum) so seed images stay available offline/CDN-safe.
+        return f"https://picsum.photos/seed/csm-{photo_id}/900/1100"
 
     def _seed_reviews(self, product: Product, customer) -> None:
         reviews = [

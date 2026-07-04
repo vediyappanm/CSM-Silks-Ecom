@@ -1,40 +1,69 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, MapPin, ShieldCheck, Star, Tag, Truck } from 'lucide-react';
-import { api } from '@/lib/api';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  BadgeCheck,
+  CheckCircle2,
+  Heart,
+  Loader2,
+  MapPin,
+  Minus,
+  Plus,
+  Share2,
+  ShieldCheck,
+  Star,
+  Tag,
+  Truck,
+} from 'lucide-react';
+import { ProductStickyBar } from '@/components/ProductStickyBar';
+import { api, isImageAssetUrl } from '@/lib/api';
+import { buildVariantImageMap, getProductImageList } from '@/lib/productImages';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
+import { liveStatusLabel } from '@/lib/liveStatus';
+import { formatDeliveryEta, useDeliveryCheck } from '@/lib/useDeliveryCheck';
+import {
+  getProductSizes,
+  getVariantStockForSize,
+  resolveProductVariant,
+  resolveVariantId,
+} from '@/lib/variants';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
-import type { DeliveryCheck, Product, ProductReview } from '@/types';
+import type { Product, ProductReview } from '@/types';
 
 export function ProductDetail() {
   const { id } = useParams<{ gender: string; id: string }>();
   const navigate = useNavigate();
-  const { addToCart, toggleWishlist, isInWishlist } = useApp();
+  const { addToCart, toggleWishlist, isInWishlist, showToast } = useApp();
   const [selectedColor, setSelectedColor] = useState(0);
   const [selectedThumb, setSelectedThumb] = useState(0);
+  const [selectedSize, setSelectedSize] = useState('');
+  const [quantity, setQuantity] = useState(1);
   const [product, setProduct] = useState<Product | null>(null);
   const [reviews, setReviews] = useState<ProductReview[]>([]);
-  const [pinCode, setPinCode] = useState('600001');
-  const pinCodeRef = useRef(pinCode);
-  const [delivery, setDelivery] = useState<DeliveryCheck | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    pinCodeRef.current = pinCode;
-  }, [pinCode]);
+  const {
+    pinCode,
+    setPinCode,
+    delivery,
+    status: deliveryStatus,
+    error: deliveryError,
+    checkDelivery,
+    isChecking,
+  } = useDeliveryCheck(product?.slug || id, { enabled: Boolean(product?.slug || id) });
 
   const loadProduct = useCallback(() => {
     if (!id) return Promise.resolve();
+    setLoading(true);
     return api.products.get(id)
       .then((item) => {
         setProduct(item);
         setSelectedThumb(0);
         setSelectedColor(0);
-        return Promise.allSettled([
-          api.products.reviews.list(item.slug).then(setReviews),
-          api.products.delivery(item.slug, pinCodeRef.current).then(setDelivery),
-        ]);
+        const sizes = getProductSizes(item);
+        const defaultSize = sizes.find(size => getVariantStockForSize(item, size) > 0) || sizes[0] || '';
+        setSelectedSize(defaultSize);
+        setQuantity(1);
+        return api.products.reviews.list(item.slug).then(setReviews);
       })
       .catch(() => setProduct(null))
       .finally(() => setLoading(false));
@@ -43,7 +72,9 @@ export function ProductDetail() {
   useEffect(() => {
     if (!id) return;
     window.scrollTo(0, 0);
-    void loadProduct();
+    queueMicrotask(() => {
+      void loadProduct();
+    });
   }, [id, loadProduct]);
 
   const realtimeStatus = useCatalogLiveRefresh({
@@ -52,78 +83,134 @@ export function ProductDetail() {
     slug: product?.slug || id,
     onUpdate: () => {
       void loadProduct();
+      void checkDelivery();
     },
   });
 
+  const variantImageMap = useMemo(
+    () => buildVariantImageMap(product?.image_records),
+    [product?.image_records],
+  );
+
+  const sizeOptions = useMemo(() => (product ? getProductSizes(product) : []), [product]);
+
+  const activeVariant = useMemo(() => {
+    if (!product) return undefined;
+    return resolveProductVariant(product, {
+      size: selectedSize || undefined,
+      colorIndex: selectedColor,
+    });
+  }, [product, selectedColor, selectedSize]);
+
+  const imageList = useMemo(
+    () => (product ? getProductImageList(product, activeVariant?.id, variantImageMap) : []),
+    [activeVariant?.id, product, variantImageMap],
+  );
+
   if (loading) {
     return (
-      <div className="pd-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-        <div style={{ fontFamily: 'var(--display)', fontSize: 28, color: 'var(--ink)' }}>Loading product...</div>
+      <div className="pd-page pd-loading-page" aria-live="polite">
+        <div className="pd-loading-shell">
+          <div className="pd-loading-media shimmer" />
+          <div className="pd-loading-copy">
+            <div className="shimmer pd-loading-line wide" />
+            <div className="shimmer pd-loading-line" />
+            <div className="shimmer pd-loading-line short" />
+          </div>
+        </div>
       </div>
     );
   }
 
   if (!product) {
     return (
-      <div className="pd-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>CSM</div>
-          <h2 style={{ fontFamily: 'var(--display)', fontSize: 28, color: 'var(--ink)' }}>Product not found</h2>
-          <button className="btn btn-gold" style={{ marginTop: 16 }} onClick={() => navigate('/')}>Back to Home</button>
+      <div className="pd-page pd-empty-page">
+        <div className="catalog-empty">
+          <div className="catalog-empty-mark">CSM</div>
+          <h2>Product not found</h2>
+          <p>This weave may have moved or sold out from live inventory.</p>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/')}>Back to home</button>
         </div>
       </div>
     );
   }
 
   const p = product;
-  const variant = p.variants?.[selectedColor] || p.variants?.[0];
-  const activePrice = Number(variant?.price || p.price || 0);
-  const activeMrp = Number(variant?.mrp || p.mrp || activePrice);
-  const activeStock = Number(variant?.available_qty ?? p.available_qty ?? 0);
-  const disc = activeMrp ? Math.round((1 - activePrice / activeMrp) * 100) : 0;
-  const imageList = p.images?.length ? p.images : [];
-  const selectedImage = imageList[selectedThumb];
-  const attrs = p.gender === 'men'
-    ? [['Material', variant?.fabric || 'Pure Silk'], ['Zari', variant?.zari_type || 'Gold Zari'], ['Size', variant?.size || 'S to 5XL'], ['Care', variant?.care_instructions || 'Dry Clean Only']]
-    : [['Fabric', variant?.fabric || 'Pure Silk'], ['Zari', variant?.zari_type || 'Gold Zari'], ['Occasion', (p.occasions || []).join(' / ') || 'Bridal / Festive'], ['Blouse Piece', variant?.blouse_included ? 'Included' : 'Not included']];
-
+  const activePrice = Number(activeVariant?.price || p.price || 0);
+  const activeMrp = Number(activeVariant?.mrp || p.mrp || activePrice);
+  const activeStock = Number(activeVariant?.available_qty ?? p.available_qty ?? 0);
+  const disc = activeMrp ? Math.max(0, Math.round((1 - activePrice / activeMrp) * 100)) : 0;
+  const selectedImage = imageList[Math.min(selectedThumb, Math.max(imageList.length - 1, 0))];
   const inWish = isInWishlist(p.id);
+  const canPurchase = activeStock > 0;
+  const maxQty = Math.max(1, Math.min(activeStock || 1, 10));
+
+  const attrs = p.gender === 'men'
+    ? [['Material', activeVariant?.fabric || 'Pure Silk'], ['Zari', activeVariant?.zari_type || 'Gold Zari'], ['Size', activeVariant?.size || selectedSize || 'S to 5XL'], ['Care', activeVariant?.care_instructions || 'Dry Clean Only']]
+    : [['Fabric', activeVariant?.fabric || 'Pure Silk'], ['Zari', activeVariant?.zari_type || 'Gold Zari'], ['Occasion', (p.occasions || []).join(' / ') || 'Bridal / Festive'], ['Blouse Piece', activeVariant?.blouse_included ? 'Included' : 'Not included']];
+
+  const buildCartProduct = () => ({
+    ...p,
+    variant_id: resolveVariantId(p, { size: selectedSize || undefined, colorIndex: selectedColor }),
+    price: activePrice,
+    mrp: activeMrp,
+  });
 
   const handleAddToCart = () => {
-    if (activeStock <= 0) return;
-    void addToCart({ ...p, variant_id: variant?.id || p.variant_id });
+    if (!canPurchase) return;
+    void addToCart(buildCartProduct(), quantity);
   };
 
-  const handleBuyNow = () => {
-    if (activeStock <= 0) return;
-    void addToCart({ ...p, variant_id: variant?.id || p.variant_id });
-    navigate('/cart');
+  const handleBuyNow = async () => {
+    if (!canPurchase) return;
+    const added = await addToCart(buildCartProduct(), quantity);
+    if (added) navigate('/cart');
   };
-  const checkDelivery = () => {
-    void api.products.delivery(p.slug, pinCode).then(setDelivery);
+
+  const submitDeliveryCheck = (event?: FormEvent) => {
+    event?.preventDefault();
+    void checkDelivery();
   };
-  const etaText = delivery?.serviceable
-    ? `${new Date(delivery.eta_min).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${new Date(delivery.eta_max).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
-    : 'Check availability';
+
+  const etaText = formatDeliveryEta(delivery);
+  const deliveryMessage = deliveryError
+    || (delivery?.serviceable
+      ? `Delivery by ${etaText}. ${delivery.cod_available ? 'Cash on delivery available.' : 'Prepaid orders only.'}`
+      : delivery?.message || (isChecking ? 'Checking delivery for your PIN...' : 'Enter PIN to check delivery'));
+
+  const shareProduct = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: p.name, text: p.hook || p.name, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      showToast('OK', 'Link copied', 'Product link copied to clipboard');
+    } catch {
+      showToast('!', 'Share unavailable', 'Could not share this product right now');
+    }
+  };
 
   return (
-    <div className="pd-page">
+    <div className="pd-page pd-flipkart">
       <div className="pd-grid">
         <div className="pd-gallery">
           <div className="pd-main-img">
             <ProductVisual product={p} className="detail-visual" imageUrl={selectedImage} />
+            {disc > 0 && <span className="pd-gallery-off">{disc}% OFF</span>}
           </div>
           <div className="pd-thumbs">
-            {(p.images?.length ? p.images : p.colors || ['#7a1e1e', '#c4923a', '#0f5b45']).slice(0, 4).map((value, i) => (
+            {imageList.map((value, i) => (
               <button
                 type="button"
-                key={i}
+                key={`${value}-${i}`}
                 className={`pd-thumb ${i === selectedThumb ? 'on' : ''}`}
-                style={value.startsWith('http') ? { backgroundImage: `url(${value})` } : { background: value }}
+                style={isImageAssetUrl(value) ? { backgroundImage: `url(${value})` } : { background: value }}
                 onClick={() => setSelectedThumb(i)}
                 aria-label={`View product image ${i + 1}`}
               >
-                {!value.startsWith('http') && 'CSM'}
+                {!isImageAssetUrl(value) && 'CSM'}
               </button>
             ))}
           </div>
@@ -131,61 +218,114 @@ export function ProductDetail() {
 
         <div className="pd-info">
           <div className="pd-breadcrumb" onClick={() => navigate(p.gender === 'men' ? '/mens' : '/womens')}>
-            Back to {p.gender === 'men' ? "Men's Silk" : "Women's Sarees"} <span>/</span> {p.cat}
+            Home <span>/</span> {p.gender === 'men' ? "Men's Silk" : "Women's Sarees"} <span>/</span> {p.cat}
           </div>
+
+          <div className="pd-title-row">
+            <h1 className="pd-title">{p.name}</h1>
+            <div className="pd-title-actions">
+              <button type="button" className="pd-icon-btn" onClick={() => void toggleWishlist(p)} aria-label={inWish ? 'Remove from wishlist' : 'Save to wishlist'}>
+                <Heart size={18} fill={inWish ? 'currentColor' : 'none'} />
+              </button>
+              <button type="button" className="pd-icon-btn" onClick={() => void shareProduct()} aria-label="Share product">
+                <Share2 size={18} />
+              </button>
+            </div>
+          </div>
+
           <div className="pd-badges">
+            {p.assured && <span className="pd-badge pdb-assured"><BadgeCheck size={14} /> CSM Assured</span>}
             <span className="pd-badge pdb-gold">{p.cat}</span>
-            <span className="pd-badge pdb-grn">{activeStock > 0 ? `${activeStock} In Stock` : 'Sold Out'}</span>
-            <span className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</span>
-            {p.assured && <span className="pd-badge pdb-blu">CSM Assured</span>}
+            <span className={`pd-badge ${canPurchase ? 'pdb-grn' : 'pdb-danger'}`}>
+              {canPurchase ? `${activeStock} in stock` : 'Sold out'}
+            </span>
+            <span className={`ws-chip ${realtimeStatus}`}>{liveStatusLabel(realtimeStatus, 'stock')}</span>
             {p.is_gi_tagged && <span className="pd-badge pdb-blu">GI Tagged</span>}
           </div>
-          <h1 className="pd-title">{p.name}</h1>
-          <div className="pd-price-row">
-            <div className="pd-price">Rs {activePrice.toLocaleString('en-IN')}</div>
-            <div className="pd-mrp">Rs {activeMrp.toLocaleString('en-IN')}</div>
-            <div className="pd-off">{disc}% OFF</div>
-          </div>
+
           <div className="pd-rating">
             <span className="pd-stars"><Star size={14} fill="currentColor" /> {Number(p.avg_rating || 0).toFixed(1)}</span>
-            <span>{Number(p.avg_rating || 0).toFixed(1)} / {p.review_count || 0} reviews</span>
+            <span>{p.review_count || 0} ratings</span>
+            {activeVariant?.sku && <span className="pd-sku">SKU: {activeVariant.sku}</span>}
           </div>
+
+          <div className="pd-price-panel">
+            <div className="pd-price-row">
+              <div className="pd-price">Rs {activePrice.toLocaleString('en-IN')}</div>
+              {activeMrp > activePrice && <div className="pd-mrp">Rs {activeMrp.toLocaleString('en-IN')}</div>}
+              {disc > 0 && <div className="pd-off">{disc}% off</div>}
+            </div>
+            <div className="pd-tax-note">Inclusive of all taxes</div>
+          </div>
+
           <div className="pd-offers">
-            {[p.deal_label || 'Special Price', 'Extra 5% off on prepaid orders', 'Free shipping above Rs 999'].map((offer) => (
+            {[p.deal_label || 'Special price', 'Extra 5% off on prepaid orders', 'Free shipping above Rs 999'].map(offer => (
               <div key={offer} className="pd-offer"><Tag size={15} /> {offer}</div>
             ))}
           </div>
+
           <div className="pd-delivery-card">
-            <div className="pd-delivery-title"><MapPin size={17} /> Delivery options</div>
-            <div className="pd-pin-row">
-              <input value={pinCode} onChange={(event) => setPinCode(event.target.value)} placeholder="Enter PIN code" />
-              <button onClick={checkDelivery}>Check</button>
+            <div className="pd-delivery-title">
+              <MapPin size={17} />
+              Delivery &amp; services
+              <span className={`pd-delivery-live ${deliveryStatus}`}>
+                {isChecking ? 'Checking' : deliveryStatus === 'ready' ? 'Live' : 'PIN check'}
+              </span>
             </div>
-            <div className={`pd-delivery-result ${delivery?.serviceable ? 'ok' : ''}`}>
-              <Truck size={16} />
-              {delivery?.serviceable ? `Delivery by ${etaText}. ${delivery.cod_available ? 'COD available.' : 'Prepaid only.'}` : delivery?.message || 'Enter PIN to check delivery'}
+            <form className="pd-pin-row" onSubmit={submitDeliveryCheck}>
+              <input
+                value={pinCode}
+                onChange={event => setPinCode(event.target.value)}
+                placeholder="Enter 6-digit PIN"
+                inputMode="numeric"
+                autoComplete="postal-code"
+                maxLength={6}
+                aria-label="Delivery PIN code"
+              />
+              <button type="submit" disabled={isChecking}>
+                {isChecking ? <Loader2 size={16} className="spin" /> : 'Check'}
+              </button>
+            </form>
+            <div className={`pd-delivery-result ${delivery?.serviceable ? 'ok' : ''} ${isChecking ? 'checking' : ''}`}>
+              {isChecking ? <Loader2 size={16} className="spin" /> : <Truck size={16} />}
+              <span>{deliveryMessage}</span>
             </div>
-          </div>
-          <div className="pd-section-lbl">Product Details</div>
-          <div className="pd-attrs">
-            {attrs.map(([l, v]) => (
-              <div key={l} className="pd-attr">
-                <div className="pda-l">{l}</div>
-                <div className="pda-v">{v}</div>
+            {delivery?.serviceable && (
+              <div className="pd-delivery-perks">
+                {delivery.exchange_available && <span>Easy exchange</span>}
+                {delivery.return_days ? <span>{delivery.return_days}-day returns</span> : null}
+                {p.assured && <span>Quality checked dispatch</span>}
               </div>
-            ))}
+            )}
           </div>
-          {!!p.key_highlights?.length && (
+
+          {sizeOptions.length > 0 && (
             <>
-              <div className="pd-section-lbl">Highlights</div>
-              <div className="pd-highlights">
-                {p.key_highlights.map((item) => (
-                  <div key={item}><CheckCircle2 size={15} /> {item}</div>
-                ))}
+              <div className="pd-section-lbl">Select size</div>
+              <div className="pd-size-row">
+                {sizeOptions.map(size => {
+                  const stock = getVariantStockForSize(p, size, selectedColor);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      className={`pd-size-chip ${selectedSize === size ? 'on' : ''} ${stock <= 0 ? 'disabled' : ''}`}
+                      onClick={() => {
+                        if (stock <= 0) return;
+                        setSelectedSize(size);
+                        setSelectedThumb(0);
+                      }}
+                      disabled={stock <= 0}
+                    >
+                      {size}
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}
-          <div className="pd-section-lbl">Select Colour</div>
+
+          <div className="pd-section-lbl">Select colour</div>
           <div className="pd-colors">
             {(p.variants?.length ? p.variants : p.colors.map((c, i) => ({ id: i, color_hex: c }))).map((v, i) => (
               <button
@@ -193,40 +333,73 @@ export function ProductDetail() {
                 key={v.id}
                 className={`pd-color ${i === selectedColor ? 'on' : ''}`}
                 style={{ background: v.color_hex || p.colors[i] }}
-                onClick={() => setSelectedColor(i)}
+                onClick={() => {
+                  setSelectedColor(i);
+                  setSelectedThumb(0);
+                }}
                 aria-label={`Select colour ${i + 1}`}
                 aria-pressed={i === selectedColor}
               />
             ))}
           </div>
-          <div className="pd-cta-row">
-            <button className="pd-btn-wish" onClick={() => void toggleWishlist(p)}>
-              {inWish ? 'Saved' : 'Save'}
+
+          <div className="pd-section-lbl">Quantity</div>
+          <div className="pd-qty-row">
+            <button type="button" className="pd-qty-btn" onClick={() => setQuantity(q => Math.max(1, q - 1))} disabled={quantity <= 1} aria-label="Decrease quantity">
+              <Minus size={16} />
             </button>
-            <button className="pd-btn-try" onClick={() => navigate('/tryon')}>
-              {p.gender === 'men' ? 'View on Model' : 'AI Try-On'}
+            <span className="pd-qty-value" aria-live="polite">{quantity}</span>
+            <button type="button" className="pd-qty-btn" onClick={() => setQuantity(q => Math.min(maxQty, q + 1))} disabled={quantity >= maxQty} aria-label="Increase quantity">
+              <Plus size={16} />
             </button>
-            <button className="pd-btn-cart" onClick={handleAddToCart} disabled={activeStock <= 0}>
-              {activeStock > 0 ? 'Add to Cart' : 'Sold Out'}
+            <span className="pd-qty-note">{canPurchase ? `${activeStock} units available` : 'Currently unavailable'}</span>
+          </div>
+
+          <div className="pd-cta-row pd-desktop-cta">
+            <button type="button" className="pd-btn-cart" onClick={handleAddToCart} disabled={!canPurchase} aria-label={canPurchase ? 'Add to cart' : 'Sold out'}>
+              {canPurchase ? 'Add to cart' : 'Sold out'}
+            </button>
+            <button type="button" className="pd-btn-buy" onClick={() => void handleBuyNow()} disabled={!canPurchase} aria-label={canPurchase ? 'Buy now' : 'Unavailable'}>
+              {canPurchase ? 'Buy now' : 'Unavailable'}
             </button>
           </div>
-          <button className="pd-btn-buy" onClick={handleBuyNow} disabled={activeStock <= 0}>
-            {activeStock > 0 ? `Buy Now - Rs ${activePrice.toLocaleString('en-IN')}` : 'Currently unavailable'}
-          </button>
+
+          <div className="pd-section-lbl">Product details</div>
+          <div className="pd-attrs">
+            {attrs.map(([label, value]) => (
+              <div key={label} className="pd-attr">
+                <div className="pda-l">{label}</div>
+                <div className="pda-v">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {!!p.key_highlights?.length && (
+            <>
+              <div className="pd-section-lbl">Highlights</div>
+              <div className="pd-highlights">
+                {p.key_highlights.map(item => (
+                  <div key={item}><CheckCircle2 size={15} /> {item}</div>
+                ))}
+              </div>
+            </>
+          )}
+
           <div className="pd-guarantee">
             <div className="pd-g">Free {p.gender === 'men' ? 'matching piece' : 'blouse'} included where applicable</div>
             <div className="pd-g">15-day easy returns</div>
             <div className="pd-g">Free pan-India shipping above Rs 999</div>
             <div className="pd-g">GST invoice provided</div>
-            <div className="pd-g">100% authentic GI tagged collection</div>
           </div>
+
           <div className="pd-seller">
             <ShieldCheck size={18} />
             <div>
-              <strong>{p.seller_name || 'CSM Silks Kanchipuram'}</strong>
+              <strong>{delivery?.seller_name || p.seller_name || 'CSM Silks Kanchipuram'}</strong>
               <span>{p.return_days || 15}-day returns, exchange support, GST invoice, and quality check before dispatch.</span>
             </div>
           </div>
+
           {!!p.specifications && Object.keys(p.specifications).length > 0 && (
             <div className="pd-spec-table">
               {Object.entries(p.specifications).map(([key, value]) => (
@@ -234,22 +407,30 @@ export function ProductDetail() {
               ))}
             </div>
           )}
-          <div className="pd-review-panel">
+
+          <div className="pd-review-panel" id="reviews">
             <div className="pd-review-head">
-              <strong>Ratings and reviews</strong>
+              <strong>Ratings &amp; reviews</strong>
               <span>{Number(p.avg_rating || 0).toFixed(1)} average</span>
             </div>
-            {(reviews.length ? reviews : []).slice(0, 3).map((review) => (
+            {(reviews.length ? reviews : []).slice(0, 4).map(review => (
               <div className="pd-review" key={review.id}>
                 <div><Star size={13} fill="currentColor" /> {review.rating}</div>
                 <strong>{review.title}</strong>
                 <p>{review.body}</p>
-                <span>{review.customer || 'Verified customer'} {review.is_verified_purchase ? '- verified purchase' : ''}</span>
+                <span>{review.customer || 'Verified customer'} {review.is_verified_purchase ? '· verified purchase' : ''}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      <ProductStickyBar
+        price={activePrice}
+        inStock={canPurchase}
+        onAddToCart={handleAddToCart}
+        onBuyNow={() => void handleBuyNow()}
+      />
     </div>
   );
 }

@@ -1,3 +1,12 @@
+export interface ProductImageRecord {
+  id: number;
+  variant_id?: number | null;
+  image_url: string;
+  alt_text?: string;
+  sort_order: number;
+  is_primary?: boolean;
+}
+
 export interface ProductVariant {
   id: number;
   sku: string;
@@ -61,6 +70,7 @@ export interface Product {
   tags: string[];
   occasions?: string[];
   images?: string[];
+  image_records?: ProductImageRecord[];
   collections?: CatalogCollection[];
   variants?: ProductVariant[];
   available_qty?: number;
@@ -247,6 +257,21 @@ export interface AdminShipment {
   updated_at: string;
 }
 
+export interface AdminReview {
+  id: number;
+  product: number;
+  product_name: string;
+  product_slug: string;
+  rating: number;
+  title: string;
+  body: string;
+  customer: string;
+  customer_email?: string | null;
+  is_verified_purchase: boolean;
+  is_published: boolean;
+  created_at: string;
+}
+
 export interface AdminCoupon {
   id: number;
   code: string;
@@ -315,6 +340,7 @@ export interface User {
   name?: string;
   full_name?: string;
   email?: string;
+  avatar_url?: string;
   role?: string;
   loyalty_points?: number;
   loyalty_tier?: string;

@@ -36,6 +36,7 @@ class User(AbstractUser):
     wa_opted_in = models.BooleanField(default=True)
     push_opted_in = models.BooleanField(default=True)
     fcm_token = models.CharField(max_length=512, blank=True)
+    google_id = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
 
     @property
     def display_name(self) -> str:

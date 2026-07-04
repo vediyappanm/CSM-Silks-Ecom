@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MessageCircle, Ruler, Shirt, SlidersHorizontal, Sparkles } from 'lucide-react';
 import { CatalogToolbar } from '@/features/catalog/components/CatalogToolbar';
 import { ProductCard } from '@/features/catalog/components/ProductCard';
 import { api } from '@/lib/api';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
+import { liveStatusLabel } from '@/lib/liveStatus';
 import { ProductGridSkeleton } from '@/ui/components';
 import type { CatalogFacets, Product } from '@/types';
 
@@ -23,7 +25,13 @@ const valueProps = [
 ];
 
 export function Mens() {
-  const [filter, setFilter] = useState<string>('all');
+  const [searchParams] = useSearchParams();
+  const [manualFilter, setManualFilter] = useState<string>('all');
+  const filter = useMemo(() => {
+    const category = (searchParams.get('category') || '').toLowerCase();
+    if (category && MEN_CATS.some(item => item.key === category)) return category;
+    return manualFilter;
+  }, [searchParams, manualFilter]);
   const [products, setProducts] = useState<Product[]>([]);
   const [facets, setFacets] = useState<CatalogFacets | null>(null);
   const [sort, setSort] = useState('popularity');
@@ -73,7 +81,7 @@ export function Mens() {
 
   const changeFilter = (nextFilter: string) => {
     setLoading(true);
-    setFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
+    setManualFilter(prev => prev === nextFilter && nextFilter !== 'all' ? 'all' : nextFilter);
   };
 
   return (
@@ -82,7 +90,7 @@ export function Mens() {
         <div>
           <div className="catalog-hero-kicker">
             <span>Men's silk collection</span>
-            <small className={`ws-chip ${realtimeStatus}`}>{realtimeStatus === 'connected' ? 'Live stock' : realtimeStatus}</small>
+            <small className={`ws-chip ${realtimeStatus}`}>{liveStatusLabel(realtimeStatus, 'stock')}</small>
           </div>
           <h1>Silk wear for Indian occasions</h1>
           <p>Pure silk dhotis, veshtis, shirts, and wedding sets with the same live checkout flow as sarees.</p>
@@ -132,8 +140,19 @@ export function Mens() {
       />
 
       <section className="section surface-section">
+        <div className="catalog-results-bar">
+          <span>{loading ? 'Updating live catalog...' : `${products.length} products`}</span>
+          <span className={`ws-chip ${realtimeStatus}`}>{liveStatusLabel(realtimeStatus, 'stock')}</span>
+        </div>
         {loading ? (
           <ProductGridSkeleton />
+        ) : products.length === 0 ? (
+          <div className="catalog-empty">
+            <div className="catalog-empty-mark">CSM</div>
+            <h2>No men's styles match these filters</h2>
+            <p>Try another category, price range, or turn off in-stock only.</p>
+            <button type="button" className="btn btn-primary" onClick={() => { setManualFilter('all'); setMaxPrice(''); setRating(''); setInStock(false); }}>Reset filters</button>
+          </div>
         ) : (
           <div className="pg">
             {products.map(product => <ProductCard key={product.id} product={product} />)}

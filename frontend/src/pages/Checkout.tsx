@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { getDeliveryPin } from '@/lib/deliveryPin';
 import { useCatalogLiveRefresh } from '@/lib/useCatalogLiveRefresh';
 import { useApp } from '@/store/AppContext';
 import { ProductVisual } from '@/ui/components';
@@ -28,9 +29,22 @@ const initialCheckoutForm: CheckoutForm = {
   address_line_2: '',
   city: '',
   state: '',
-  pin_code: '',
+  pin_code: getDeliveryPin(),
   email: '',
 };
+
+function isAddressComplete(address?: Address | null) {
+  if (!address) return false;
+  const pin = (address.pin_code || address.pincode || '').trim();
+  return Boolean(
+    address.full_name?.trim() &&
+    address.phone?.trim() &&
+    (address.address_line_1 || address.address_line1 || '').trim() &&
+    address.city?.trim() &&
+    address.state?.trim() &&
+    /^\d{6}$/.test(pin),
+  );
+}
 
 const INDIAN_STATES = [
   'Andaman and Nicobar Islands',
@@ -215,6 +229,7 @@ export function Checkout() {
   const selectedAddress = useMemo(() => {
     return typeof selectedAddressId === 'number' ? addresses.find(address => address.id === selectedAddressId) : null;
   }, [addresses, selectedAddressId]);
+  const selectedAddressIsComplete = useMemo(() => isAddressComplete(selectedAddress), [selectedAddress]);
 
   const updateField = (field: keyof CheckoutForm, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -249,11 +264,17 @@ export function Checkout() {
       showToast('!', 'Stock changed', refreshedCart.stock_issues?.[0]?.message || 'Please review cart stock before checkout');
       return;
     }
+    if (selectedAddress?.id && !selectedAddressIsComplete) {
+      showToast('!', 'Address incomplete', 'Your saved address is missing required fields. Please use New address and complete all fields.');
+      setSelectedAddressId('new');
+      return;
+    }
     if (!validateForm()) {
       showToast('!', 'Missing Details', 'Please fix the highlighted delivery fields');
       return;
     }
     setPlacing(true);
+    let createdOrder: Awaited<ReturnType<typeof api.orders.create>> | null = null;
     try {
       const address = selectedAddress?.id ? selectedAddress : await api.addresses.create({
         full_name: `${form.first_name} ${form.last_name}`.trim(),
@@ -274,6 +295,7 @@ export function Checkout() {
         loyalty_points_to_use: loyaltyToUse,
         payment_method: paymentMethod === 'cod' ? 'cod' : 'razorpay',
       });
+      createdOrder = order;
       if (paymentMethod !== 'cod') {
         const rz = await api.payments.createRazorpayOrder(order.id);
         const razorpayKey = rz.key;
@@ -314,6 +336,12 @@ export function Checkout() {
       await clearCart();
       setTimeout(() => navigate('/orders'), 1000);
     } catch (err) {
+      if (createdOrder && paymentMethod !== 'cod') {
+        await refreshCart();
+        showToast('!', 'Payment incomplete', `Order ${createdOrder.order_number} is pending payment. Complete it from My Orders.`);
+        navigate('/orders');
+        return;
+      }
       showToast('!', 'Checkout failed', err instanceof Error ? err.message : 'Unable to place order');
     } finally {
       setPlacing(false);
@@ -335,7 +363,7 @@ export function Checkout() {
   return (
     <div className="checkout-page">
       <div className="checkout-layout">
-        <div>
+        <div className="checkout-form-col">
           <h1 className="checkout-title">Secure Checkout</h1>
           <p className="checkout-sub">Confirm delivery, choose Razorpay or COD, and place a real CSM Silks order.</p>
           <div className="checkout-live-row">
@@ -350,6 +378,11 @@ export function Checkout() {
 
           <div className="checkout-card">
             <div className="checkout-card-title"><div className="cct-step">1</div>Delivery Address</div>
+            {selectedAddress?.id && !selectedAddressIsComplete && (
+              <div className="cart-stock-alert checkout-alert">
+                Selected saved address is incomplete. Switch to New address and enter full delivery details.
+              </div>
+            )}
             {addresses.length > 0 && (
               <div className="address-pills">
                 {addresses.map(address => (
@@ -374,6 +407,7 @@ export function Checkout() {
                   >
                     <strong>{address.label || 'Address'}</strong>
                     <span>{address.full_name}, {address.city} {address.pin_code}</span>
+                    {!isAddressComplete(address) && <span>Incomplete address</span>}
                   </button>
                 ))}
                 <button className={selectedAddressId === 'new' ? 'on' : ''} type="button" onClick={() => { setSelectedAddressId('new'); setForm(initialCheckoutForm); }}>New address</button>
@@ -441,7 +475,7 @@ export function Checkout() {
             )}
           </div>
 
-          <button className="place-btn" onClick={() => void handlePlaceOrder()} disabled={placing || hasStockIssues}>
+          <button className="place-btn place-btn-desktop" onClick={() => void handlePlaceOrder()} disabled={placing || hasStockIssues}>
             {hasStockIssues ? 'Review cart stock first' : placing ? 'Placing order...' : `Place Order - ${fmt(estimatedPayable)}`}
           </button>
         </div>
@@ -467,6 +501,23 @@ export function Checkout() {
             <div className="os-row"><span>GST (5%)</span><span className="os-val">{fmt(t.cgst + t.sgst)}</span></div>
             <div className="os-row total"><span>Total</span><span className="os-val">{fmt(estimatedPayable)}</span></div>
           </div>
+        </div>
+      </div>
+
+      <div className="mobile-action-bar" aria-label="Checkout actions">
+        <div className="mobile-action-bar-inner">
+          <div className="mobile-action-copy">
+            <strong>{fmt(estimatedPayable)}</strong>
+            <small>{paymentMethod === 'cod' ? 'Cash on delivery' : 'Pay with Razorpay'}</small>
+          </div>
+          <button
+            type="button"
+            className="mobile-action-btn"
+            onClick={() => void handlePlaceOrder()}
+            disabled={placing || hasStockIssues}
+          >
+            {placing ? 'Placing...' : hasStockIssues ? 'Fix stock' : 'Place order'}
+          </button>
         </div>
       </div>
     </div>

@@ -67,8 +67,35 @@ frontend/
 - Admin: `admin@csmsilks.com` / `admin123`
 - Customer OTP phone: `+918888888888`
 
-## Production Notes
-- Replace default secrets before deployment.
-- Configure production PostgreSQL, Redis, Razorpay, courier, WhatsApp/SMS/email credentials.
-- Keep `OTP_DEV_FALLBACK_ENABLED=False` and `PAYMENT_DEV_FALLBACK_ENABLED=False` in production.
+## Google Sign-In (local)
+1. Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Web client.
+2. Authorized redirect URIs:
+   - `http://localhost:5173/auth/google/callback`
+   - `http://127.0.0.1:5173/auth/google/callback`
+3. Backend `.env`: `GOOGLE_CLIENT_ID=<web-client-id>` and `GOOGLE_OAUTH_ENABLED=True`.
+4. Optional: `frontend/.env.local` with `VITE_GOOGLE_CLIENT_ID=<same id>`.
+5. Restart API, open `/login`, use **Continue with Google**.
+
+Print the exact URIs anytime: `python backend/manage.py google_oauth_setup`.
+
+## Production checklist
+- [ ] `APP_ENV=production`, `DEBUG=False`, long random `SECRET_KEY`
+- [ ] `DATABASE_URL=postgres://...`, `REDIS_URL=redis://...`, `CHANNEL_LAYER_BACKEND=redis`
+- [ ] `OTP_DEV_FALLBACK_ENABLED=False`, `PAYMENT_DEV_FALLBACK_ENABLED=False`
+- [ ] Live OTP: Twilio SMS and/or Resend email (`OTP_EMAIL_ENABLED=True`)
+- [ ] Notifications: Resend and/or Gupshup WhatsApp
+- [ ] Razorpay: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
+- [ ] Shipping: `DEFAULT_COURIER_PROVIDER=manual` or full Shiprocket credentials
+- [ ] `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` for the real domain
+- [ ] Google: production redirect URI `https://your-domain/auth/google/callback`
+- [ ] `python backend/manage.py check --deploy` must pass
+- [ ] Deploy: `docker compose -f docker-compose.prod.yml up --build -d`
 - Do not commit local SQLite DBs, screenshots, logs, or `.env`.
+
+## Frontend tests
+```bash
+cd frontend
+npm test
+npm run test:e2e          # requires API on :8000 and Vite on :5173
+npm run test:e2e:icons
+```

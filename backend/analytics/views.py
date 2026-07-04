@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
-from rest_framework.permissions import IsAdminUser
+from accounts.permissions import IsStaffAdmin
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -48,7 +48,7 @@ def paid_payments():
 
 
 class AdminDashboardView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         today = timezone.localdate()
@@ -106,7 +106,7 @@ class AdminDashboardView(APIView):
 
 
 class AdminCustomersView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         users = User.objects.filter(role=User.Role.CUSTOMER).annotate(order_count=Count("orders"), total_spent=Sum("orders__total_amount")).order_by("-date_joined")[:100]
@@ -128,7 +128,7 @@ class AdminCustomersView(APIView):
 
 
 class AdminReportsView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         payments = paid_payments()
@@ -164,7 +164,7 @@ class AdminReportsView(APIView):
 
 
 class AdminAuditLogView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsStaffAdmin]
 
     def get(self, request):
         logs = AdminAuditLog.objects.select_related("user").order_by("-created_at")
