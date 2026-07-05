@@ -92,3 +92,20 @@ class Address(models.Model):
 
     def __str__(self) -> str:
         return f"{self.full_name} - {self.city}"
+
+
+class BlacklistedToken(models.Model):
+    token = models.CharField(max_length=255, unique=True, db_index=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="blacklisted_tokens", on_delete=models.CASCADE)
+    blacklisted_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["-blacklisted_at"]
+        indexes = [
+            models.Index(fields=["token"]),
+            models.Index(fields=["user", "blacklisted_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"Token for {self.user.email or self.user.phone} blacklisted at {self.blacklisted_at}"

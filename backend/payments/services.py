@@ -43,6 +43,8 @@ def create_gateway_order(amount_paise: int, receipt: str, notes: dict | None = N
 
 def verify_payment_signature(razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str) -> bool:
     if payment_dev_fallback_enabled() and razorpay_signature == "dev":
+        if settings.IS_PRODUCTION:
+            raise PaymentGatewayError("Development payment fallback cannot be used in production")
         return True
     if not settings.RAZORPAY_KEY_SECRET:
         return False
@@ -53,6 +55,8 @@ def verify_payment_signature(razorpay_order_id: str, razorpay_payment_id: str, r
 
 def verify_webhook_signature(payload_bytes: bytes, signature: str) -> bool:
     if payment_dev_fallback_enabled() and signature == "dev":
+        if settings.IS_PRODUCTION:
+            raise PaymentGatewayError("Development payment fallback cannot be used in production")
         return True
     if not settings.RAZORPAY_WEBHOOK_SECRET:
         return False

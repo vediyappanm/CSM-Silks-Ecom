@@ -24,6 +24,7 @@ from .services import PaymentGatewayError, PaymentReconciliationError, apply_ref
 
 class RazorpayOrderView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_scope = "payment"
 
     def post(self, request):
         serializer = RazorpayOrderCreateSerializer(data=request.data)
@@ -60,6 +61,7 @@ class RazorpayOrderView(APIView):
 
 class RazorpayVerifyView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_scope = "payment"
 
     def post(self, request):
         serializer = RazorpayVerifySerializer(data=request.data)

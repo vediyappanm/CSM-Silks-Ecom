@@ -471,8 +471,8 @@ class Command(BaseCommand):
         return user
 
     def _pexels_image(self, photo_id: int) -> str:
-        # Stable placeholder photos (picsum) so seed images stay available offline/CDN-safe.
-        return f"https://picsum.photos/seed/csm-{photo_id}/900/1100"
+        # Local placeholder avoids flaky third-party CDNs in dev/E2E browsers.
+        return "/placeholder-product.svg"
 
     def _seed_reviews(self, product: Product, customer) -> None:
         reviews = [

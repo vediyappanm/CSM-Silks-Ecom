@@ -39,8 +39,10 @@ def _check_database() -> dict:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
-    except Exception:
-        return {"ok": False, "detail": "Database connection failed"}
+            cursor.execute("SELECT COUNT(*) FROM accounts_user")
+            cursor.fetchone()
+    except Exception as exc:
+        return {"ok": False, "detail": f"Database connection failed: {str(exc)}"}
     return {"ok": True, "detail": "Database connection is available"}
 
 

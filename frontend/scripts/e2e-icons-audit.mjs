@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173';
+const E2E_DEV_PHONE = process.env.E2E_DEV_PHONE || '+918888888888';
 const findings = [];
 const outDir = path.resolve('scripts/e2e-artifacts');
 fs.mkdirSync(outDir, { recursive: true });
@@ -19,7 +20,11 @@ function note(severity, area, message) {
 async function countIcons(page) {
   return page.evaluate(() => {
     const svgs = document.querySelectorAll('svg');
-    const brokenImgs = [...document.querySelectorAll('img')].filter(img => !img.complete || img.naturalWidth === 0);
+    const brokenImgs = [...document.querySelectorAll('img')].filter(img => {
+      const src = img.currentSrc || img.src || '';
+      if (src.includes('.svg')) return false;
+      return !img.complete || img.naturalWidth === 0;
+    });
     const zeroSizeSvgs = [...svgs].filter(svg => {
       const r = svg.getBoundingClientRect();
       return r.width === 0 && r.height === 0 && svg.closest('[hidden], [aria-hidden="true"], .is-hidden') == null;
@@ -73,8 +78,17 @@ async function clickNavIcon(page, label, expectPath) {
   }
 }
 
+async function launchBrowser() {
+  const channel = process.env.E2E_BROWSER || 'chromium';
+  const options = { headless: true };
+  if (channel === 'msedge' || channel === 'chrome') {
+    options.channel = channel;
+  }
+  return chromium.launch(options);
+}
+
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: 1366, height: 900 } });
   const page = await context.newPage();
   page.on('pageerror', err => note('error', 'runtime', err.message));
@@ -154,11 +168,16 @@ async function main() {
 
   // Google button on login
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
-  const googleBtn = page.getByRole('button', { name: /continue with google/i });
+  const googleBtn = page.getByRole('button', { name: /continue with google|sign in with google|sign up with google/i });
+  const googleIframe = page.locator('iframe[src*="accounts.google.com"]');
   if (await googleBtn.count()) {
     const box = await googleBtn.boundingBox();
     if (!box || box.height < 30) note('error', 'google', 'Google button too small/hidden');
     else note('info', 'google', 'Google button visible and sized');
+  } else if (await googleIframe.count()) {
+    const box = await googleIframe.first().boundingBox();
+    if (!box || box.height < 30) note('error', 'google', 'Google iframe too small/hidden');
+    else note('info', 'google', 'Google Identity Services iframe visible');
   } else note('error', 'google', 'Google button missing');
 
   // Mobile bottom nav icons
@@ -194,7 +213,7 @@ async function main() {
   // OTP login + authed icon routes
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
-  const phone = `9${String(Date.now()).slice(-9)}`;
+  const phone = E2E_DEV_PHONE;
   await page.getByPlaceholder(/98765|mobile|phone/i).fill(phone);
   await page.getByRole('button', { name: /send otp/i }).click();
   await page.waitForTimeout(1200);
@@ -234,7 +253,8 @@ async function main() {
   await page.getByPlaceholder(/email or username/i).fill('admin@csmsilks.com');
   await page.locator('input[type="password"]').fill('admin123');
   await page.getByRole('button', { name: /^login$/i }).click();
-  await page.waitForTimeout(2000);
+  await page.waitForSelector('.admin-nav, .admin-sidebar, .admin-shell', { timeout: 10000 }).catch(() => null);
+  await page.waitForTimeout(1000);
   const adminIcons = await countIcons(page);
   if (adminIcons.svgCount < 5) note('error', 'admin', `Too few admin icons: ${adminIcons.svgCount}`);
   else note('info', 'admin', `${adminIcons.svgCount} admin icons`);

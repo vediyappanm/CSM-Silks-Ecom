@@ -159,7 +159,8 @@ class TryOnView(APIView):
             )
         try:
             result, model_used, tokens_used, latency_ms = anthropic_tryon_result(product=product, validated=serializer.validated_data)
-        except Exception as exc:
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            logger.error("AI try-on failed: %s", exc)
             result = None
             model_used = settings.ANTHROPIC_MODEL
             latency_ms = 0

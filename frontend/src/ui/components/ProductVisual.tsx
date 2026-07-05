@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { resolveAssetUrl } from '@/lib/api';
 import type { Product } from '@/types';
 
@@ -9,14 +9,27 @@ interface ProductVisualProps {
   imageUrl?: string;
 }
 
+function ProductWeave({ label }: { label: string }) {
+  return (
+    <>
+      <div className="product-visual-weave" />
+      <div className="product-visual-fold left" />
+      <div className="product-visual-fold right" />
+      <div className="product-visual-label">{label}</div>
+    </>
+  );
+}
+
+function ProductPhoto({ url, alt, fallback }: { url: string; alt: string; fallback: ReactNode }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <>{fallback}</>;
+  return <img src={url} alt={alt} loading="lazy" onError={() => setFailed(true)} />;
+}
+
 export function ProductVisual({ product, label = 'CSM', className = '', imageUrl }: ProductVisualProps) {
   const colors = product?.colors?.length ? product.colors : ['#7a1e1e', '#c4923a', '#0f5b45'];
   const visualUrl = resolveAssetUrl(imageUrl || product?.images?.[0]);
-  const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => {
-    setImageFailed(false);
-  }, [visualUrl]);
-  const showPhoto = Boolean(visualUrl) && !imageFailed;
+  const weave = <ProductWeave label={label} />;
   const style = {
     '--pv-a': colors[0] || '#7a1e1e',
     '--pv-b': colors[1] || '#c4923a',
@@ -24,21 +37,16 @@ export function ProductVisual({ product, label = 'CSM', className = '', imageUrl
   } as CSSProperties;
 
   return (
-    <div className={`product-visual ${showPhoto ? 'has-photo' : ''} ${className}`} style={style}>
-      {showPhoto ? (
-        <img
-          src={visualUrl}
+    <div className={`product-visual ${visualUrl ? 'has-photo' : ''} ${className}`} style={style}>
+      {visualUrl ? (
+        <ProductPhoto
+          key={visualUrl}
+          url={visualUrl}
           alt={product?.name || 'CSM silk textile'}
-          loading="lazy"
-          onError={() => setImageFailed(true)}
+          fallback={weave}
         />
       ) : (
-        <>
-          <div className="product-visual-weave" />
-          <div className="product-visual-fold left" />
-          <div className="product-visual-fold right" />
-          <div className="product-visual-label">{label}</div>
-        </>
+        weave
       )}
     </div>
   );

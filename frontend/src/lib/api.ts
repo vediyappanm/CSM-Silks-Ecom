@@ -50,7 +50,13 @@ export function resolveAssetUrl(url?: string | null) {
   ) {
     return url;
   }
-  return new URL(url.startsWith('/') ? url : `/${url}`, getApiOrigin()).toString();
+  if (url.startsWith('/media/')) {
+    return new URL(url, getApiOrigin()).toString();
+  }
+  if (url.startsWith('/')) {
+    return url;
+  }
+  return new URL(`/${url}`, getApiOrigin()).toString();
 }
 
 export function isImageAssetUrl(url?: string | null) {

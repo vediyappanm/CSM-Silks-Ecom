@@ -10,10 +10,14 @@
     "test": "vitest run",
     "test:e2e": "node scripts/e2e-audit.mjs",
     "test:e2e:icons": "node scripts/e2e-icons-audit.mjs",
+    "test:e2e:edge": "node scripts/e2e-edge.mjs",
+    "test:e2e:full": "node scripts/e2e-full.mjs",
+    "setup:google-oauth": "node scripts/setup-google-oauth.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
+    "@react-oauth/google": "^0.13.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",

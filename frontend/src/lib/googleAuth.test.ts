@@ -52,4 +52,36 @@ describe('googleAuth', () => {
     expect(url).not.toContain('client_secret');
     expect(setItem).toHaveBeenCalled();
   });
+
+  it('starts Google authorization code redirect when configured', () => {
+    const assign = vi.fn();
+    const setItem = vi.fn();
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://localhost:5173',
+        port: '5173',
+        assign,
+      },
+    });
+    vi.stubGlobal('location', {
+      origin: 'http://localhost:5173',
+      port: '5173',
+      assign,
+    });
+    vi.stubGlobal('sessionStorage', {
+      setItem,
+      getItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    });
+    vi.stubGlobal('crypto', { randomUUID: () => 'test-uuid' });
+
+    startGoogleRedirect('client.apps.googleusercontent.com', '/account', { useCodeFlow: true });
+
+    expect(assign).toHaveBeenCalledOnce();
+    const url = String(assign.mock.calls[0][0]);
+    expect(url).toContain('response_type=code');
+    expect(url).not.toContain('nonce=');
+    expect(url).toContain(encodeURIComponent('http://localhost:5173/auth/google/callback'));
+  });
 });

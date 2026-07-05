@@ -27,11 +27,25 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-min-32-chars!!")
-DEBUG = env_bool("DEBUG", True)
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+DEBUG = env_bool("DEBUG", False)
 APP_ENV = os.getenv("APP_ENV", "development")
 
-ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "*")
+IS_PRODUCTION = APP_ENV == "production"
+
+if not SECRET_KEY:
+    if IS_PRODUCTION:
+        raise ValueError("SECRET_KEY environment variable must be set in production")
+    SECRET_KEY = "dev-secret-key-change-in-production-min-32-chars"
+
+if IS_PRODUCTION and DEBUG:
+    raise ValueError("DEBUG cannot be True in production. Set DEBUG=False in environment variables.")
+
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "")
+if not ALLOWED_HOSTS:
+    if IS_PRODUCTION:
+        raise ValueError("ALLOWED_HOSTS must be configured in production")
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 
 INSTALLED_APPS = [
     "daphne",
@@ -93,7 +107,12 @@ ASGI_APPLICATION = "csm_backend.asgi.application"
 
 
 def database_config() -> dict:
-    url = os.getenv("DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'csm_silks_django.db'}")
+    url = os.getenv("DATABASE_URL", "")
+    if not url:
+        if IS_PRODUCTION:
+            raise ValueError("DATABASE_URL must be configured in production")
+        url = f"sqlite:///{PROJECT_ROOT / 'csm_silks_django.db'}"
+    
     parsed = urlparse(url)
     if parsed.scheme in {"postgres", "postgresql"}:
         return {
@@ -103,6 +122,9 @@ def database_config() -> dict:
             "PASSWORD": parsed.password or "",
             "HOST": parsed.hostname or "localhost",
             "PORT": str(parsed.port or 5432),
+            "OPTIONS": {
+                "sslmode": "require" if IS_PRODUCTION else "allow",
+            },
         }
     if parsed.scheme in {"postgresql+asyncpg", "postgres+asyncpg"}:
         return {
@@ -112,7 +134,12 @@ def database_config() -> dict:
             "PASSWORD": parsed.password or "",
             "HOST": parsed.hostname or "localhost",
             "PORT": str(parsed.port or 5432),
+            "OPTIONS": {
+                "sslmode": "require" if IS_PRODUCTION else "allow",
+            },
         }
+    if IS_PRODUCTION:
+        raise ValueError("Production must use PostgreSQL, not SQLite. Set DATABASE_URL to a postgres:// URL")
     return {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": str(PROJECT_ROOT / "csm_silks_django.db"),
@@ -147,13 +174,15 @@ CORS_ALLOWED_ORIGINS = env_list(
     "ALLOWED_ORIGINS",
     os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:5173,http://localhost:3000,http://localhost:8080",
+        "http://localhost:5173,http://127.0.0.1:5173" if not IS_PRODUCTION else "",
     ),
 )
+if IS_PRODUCTION and not CORS_ALLOWED_ORIGINS:
+    raise ValueError("CORS_ALLOWED_ORIGINS must be configured in production")
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS if not DEBUG else []))
-
-IS_PRODUCTION = APP_ENV == "production"
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", ",".join(CORS_ALLOWED_ORIGINS))
+if IS_PRODUCTION and not CSRF_TRUSTED_ORIGINS:
+    raise ValueError("CSRF_TRUSTED_ORIGINS must be configured in production")
 
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
 SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
@@ -178,7 +207,7 @@ if IS_PRODUCTION and not DEBUG:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "accounts.auth.BlacklistJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.AllowAny",
@@ -194,12 +223,14 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.ScopedRateThrottle",
     ),
     "DEFAULT_THROTTLE_RATES": {
-        "anon": os.getenv("DRF_ANON_THROTTLE", "500/hour"),
-        "user": os.getenv("DRF_USER_THROTTLE", "5000/hour"),
-        "otp": os.getenv("DRF_OTP_THROTTLE", "5/minute"),
-        "admin_login": os.getenv("DRF_ADMIN_LOGIN_THROTTLE", "10/minute"),
-        "tracking": os.getenv("DRF_TRACKING_THROTTLE", "5/minute"),
-        "courier_webhook": os.getenv("DRF_COURIER_WEBHOOK_THROTTLE", "120/minute"),
+        "anon": os.getenv("DRF_ANON_THROTTLE", "100/hour" if IS_PRODUCTION else "500/hour"),
+        "user": os.getenv("DRF_USER_THROTTLE", "1000/hour" if IS_PRODUCTION else "5000/hour"),
+        "otp": os.getenv("DRF_OTP_THROTTLE", "3/minute" if IS_PRODUCTION else "120/minute"),
+        "admin_login": os.getenv("DRF_ADMIN_LOGIN_THROTTLE", "5/minute" if IS_PRODUCTION else "10/minute"),
+        "tracking": os.getenv("DRF_TRACKING_THROTTLE", "10/minute" if IS_PRODUCTION else "5/minute"),
+        "courier_webhook": os.getenv("DRF_COURIER_WEBHOOK_THROTTLE", "60/minute" if IS_PRODUCTION else "120/minute"),
+        "payment": os.getenv("DRF_PAYMENT_THROTTLE", "10/minute" if IS_PRODUCTION else "30/minute"),
+        "checkout": os.getenv("DRF_CHECKOUT_THROTTLE", "20/hour" if IS_PRODUCTION else "100/hour"),
     },
     "DEFAULT_SCHEMA_CLASS": "csm_backend.schema.CSMAutoSchema",
 }
@@ -294,9 +325,88 @@ GOOGLE_OAUTH_REDIRECT_PATH = os.getenv("GOOGLE_OAUTH_REDIRECT_PATH", "/auth/goog
 GOOGLE_OAUTH_REDIRECT_URIS = os.getenv("GOOGLE_OAUTH_REDIRECT_URIS", "")
 
 OTP_TTL_MINUTES = int(os.getenv("OTP_TTL_MINUTES", "5"))
-OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "3"))
-OTP_DEV_FALLBACK_ENABLED = os.getenv("OTP_DEV_FALLBACK_ENABLED", "False").lower() in {"1", "true", "yes", "on"}
+OTP_RATE_LIMIT = int(os.getenv("OTP_RATE_LIMIT", "100" if DEBUG else "3"))
+OTP_DEV_FALLBACK_ENABLED = env_bool("OTP_DEV_FALLBACK_ENABLED", False)
 
-if IS_PRODUCTION and not DEBUG:
+if IS_PRODUCTION:
     OTP_DEV_FALLBACK_ENABLED = False
     PAYMENT_DEV_FALLBACK_ENABLED = False
+    if env_bool("OTP_DEV_FALLBACK_ENABLED", False):
+        raise ValueError("OTP_DEV_FALLBACK_ENABLED cannot be True in production")
+    if env_bool("PAYMENT_DEV_FALLBACK_ENABLED", False):
+        raise ValueError("PAYMENT_DEV_FALLBACK_ENABLED cannot be True in production")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {asctime} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose" if DEBUG else "simple",
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": BASE_DIR / "logs" / "django.log",
+            "maxBytes": 1024 * 1024 * 50,  # 50 MB
+            "backupCount": 5,
+            "formatter": "verbose",
+        },
+        "error_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": BASE_DIR / "logs" / "django_error.log",
+            "maxBytes": 1024 * 1024 * 50,  # 50 MB
+            "backupCount": 10,
+            "formatter": "verbose",
+            "level": "ERROR",
+        },
+    },
+    "root": {
+        "handlers": ["console"] if DEBUG else ["console", "file", "error_file"],
+        "level": "INFO" if IS_PRODUCTION else "DEBUG",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"] if DEBUG else ["console", "file"],
+            "level": "INFO" if IS_PRODUCTION else "DEBUG",
+            "propagate": False,
+        },
+        "django.db.backends": {
+            "handlers": ["console"] if DEBUG else ["file"],
+            "level": "WARNING" if IS_PRODUCTION else "DEBUG",
+            "propagate": False,
+        },
+        "django.security": {
+            "handlers": ["console", "error_file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "celery": {
+            "handlers": ["console"] if DEBUG else ["console", "file"],
+            "level": "INFO" if IS_PRODUCTION else "DEBUG",
+            "propagate": False,
+        },
+    },
+}
+
+# Ensure logs directory exists
+import os
+os.makedirs(BASE_DIR / "logs", exist_ok=True)
+
+# Error monitoring configuration
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+
+# Validate environment on startup
+if IS_PRODUCTION:
+    from .env_validation import validate_on_startup
+    validate_on_startup()

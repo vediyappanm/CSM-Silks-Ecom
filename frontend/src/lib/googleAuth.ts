@@ -14,30 +14,41 @@ function randomValue() {
 }
 
 export function getGoogleRedirectUri() {
+  if (import.meta.env.DEV) {
+    const port = window.location.port || '5173';
+    return `http://localhost:${port}${GOOGLE_CALLBACK_PATH}`;
+  }
   return `${window.location.origin}${GOOGLE_CALLBACK_PATH}`;
 }
 
+type GoogleRedirectOptions = {
+  /** Authorization code flow (recommended). Requires GOOGLE_CLIENT_SECRET on the backend. */
+  useCodeFlow?: boolean;
+};
+
 /**
- * Starts Google OpenID Connect implicit flow (id_token).
- * Works with only GOOGLE_CLIENT_ID — no client secret required.
- * Requires the redirect URI in Google Cloud Console Authorized redirect URIs.
+ * Starts Google OAuth redirect sign-in.
+ * Prefer authorization code flow when the backend has GOOGLE_CLIENT_SECRET configured.
  */
-export function startGoogleRedirect(clientId: string, nextPath: string) {
+export function startGoogleRedirect(clientId: string, nextPath: string, options: GoogleRedirectOptions = {}) {
   const redirectUri = getGoogleRedirectUri();
   const state = randomValue();
-  const nonce = randomValue();
+  const useCodeFlow = Boolean(options.useCodeFlow);
   sessionStorage.setItem(GOOGLE_NEXT_KEY, nextPath);
   sessionStorage.setItem(GOOGLE_STATE_KEY, state);
-  sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce);
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    response_type: 'id_token',
+    response_type: useCodeFlow ? 'code' : 'id_token',
     scope: 'openid email profile',
     prompt: 'select_account',
     state,
-    nonce,
   });
+  if (!useCodeFlow) {
+    const nonce = randomValue();
+    sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce);
+    params.set('nonce', nonce);
+  }
   window.location.assign(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 }
 

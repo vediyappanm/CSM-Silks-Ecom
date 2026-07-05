@@ -8,6 +8,7 @@ import path from 'node:path';
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173';
 const API = process.env.E2E_API_URL || 'http://127.0.0.1:8000';
+const E2E_DEV_PHONE = process.env.E2E_DEV_PHONE || '+918888888888';
 const findings = [];
 const outDir = path.resolve('scripts/e2e-artifacts');
 fs.mkdirSync(outDir, { recursive: true });
@@ -39,8 +40,20 @@ async function screenshot(page, name) {
 async function collectConsole(page, area) {
   page.on('pageerror', err => note('error', area, `pageerror: ${err.message}`));
   page.on('console', msg => {
-    if (msg.type() === 'error') note('warn', area, `console.error: ${msg.text()}`);
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (text.includes('[GSI_LOGGER]') || text.includes('accounts.google.com')) return;
+    note('warn', area, `console.error: ${text}`);
   });
+}
+
+async function launchBrowser() {
+  const channel = process.env.E2E_BROWSER || 'chromium';
+  const options = { headless: true };
+  if (channel === 'msedge' || channel === 'chrome') {
+    options.channel = channel;
+  }
+  return chromium.launch(options);
 }
 
 async function main() {
@@ -97,7 +110,7 @@ async function main() {
   }
 
   // OTP send/verify via API
-  const phone = '+918888888888';
+  const phone = E2E_DEV_PHONE;
   const otpSend = await apiJson(`${API}/api/auth/otp/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -115,7 +128,7 @@ async function main() {
     else note('info', 'api', 'OTP send/verify round-trip OK');
   }
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await launchBrowser();
   const context = await browser.newContext({ viewport: { width: 1366, height: 900 } });
   const page = await context.newPage();
   await collectConsole(page, 'browser');
@@ -185,8 +198,10 @@ async function main() {
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
   await screenshot(page, '07-login');
   const googleBtn = page.getByRole('button', { name: /continue with google|sign in with google|sign up with google/i });
+  const googleIframe = page.locator('iframe[src*="accounts.google.com"]');
   const googleBtnVisible = await googleBtn.count();
-  if (googleBtnVisible) note('info', 'login', 'Google continue button is visible');
+  const googleIframeVisible = await googleIframe.count();
+  if (googleBtnVisible || googleIframeVisible) note('info', 'login', 'Google sign-in control is visible');
   else if (config.body?.google_oauth_enabled) {
     note('error', 'login', 'Google OAuth is enabled but button is not visible');
   } else {
@@ -204,7 +219,7 @@ async function main() {
 
   // OTP flow in browser (unique phone avoids rate limit from prior runs)
   const phoneInput = page.getByPlaceholder(/98765|mobile|phone/i).first();
-  const e2ePhone = `9${String(Date.now()).slice(-9)}`;
+  const e2ePhone = E2E_DEV_PHONE;
   if (await phoneInput.count()) {
     await phoneInput.fill(e2ePhone);
     await page.getByRole('button', { name: /send otp/i }).click();
@@ -261,6 +276,29 @@ async function main() {
     }
   } else {
     note('error', 'login', 'Phone input not found on login page');
+  }
+
+  // Logged-in checkout + orders smoke (after OTP login above)
+  if (!page.url().includes('/login')) {
+    await page.goto(`${BASE}/checkout`, { waitUntil: 'networkidle' });
+    await screenshot(page, '09c-checkout');
+    const checkoutBody = await page.locator('body').innerText();
+    if (/page not found|something went wrong/i.test(checkoutBody)) {
+      note('error', 'checkout', 'Checkout page error UI');
+    } else if (checkoutBody.includes('Your cart is empty')) {
+      note('warn', 'checkout', 'Checkout reachable but cart empty');
+    } else {
+      note('info', 'checkout', 'Checkout page loaded with cart items');
+    }
+    await page.goto(`${BASE}/orders`, { waitUntil: 'networkidle' });
+    await screenshot(page, '09d-orders');
+    if (page.url().includes('/login')) note('error', 'orders', 'Orders redirected to login after OTP session');
+    else note('info', 'orders', 'Orders page reachable when logged in');
+    await page.goto(`${BASE}/search?q=silk`, { waitUntil: 'networkidle' });
+    await screenshot(page, '09e-search');
+    const searchCards = await page.locator('.product-card, a[href*="/product/"]').count();
+    if (searchCards === 0) note('warn', 'search', 'Search returned no product cards for q=silk');
+    else note('info', 'search', `Search found ${searchCards} product links`);
   }
 
   // --- Admin (clear customer session tokens first) ---

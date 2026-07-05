@@ -28,7 +28,7 @@ from .google_auth import (
     google_redirect_oauth_configured,
     verify_google_id_token,
 )
-from .models import Address, OTPChallenge
+from .models import Address, OTPChallenge, BlacklistedToken
 from .serializers import (
     AddressSerializer,
     AdminLoginSerializer,
@@ -349,7 +349,25 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        return Response({"message": "Logged out"})
+        try:
+            refresh_token = request.data.get("refresh") or request.data.get("refresh_token")
+            if refresh_token:
+                from rest_framework_simplejwt.tokens import RefreshToken as RT
+                token = RT(refresh_token)
+                token_id = token.get("jti", str(token))
+                expires_at = token.get("exp")
+                if expires_at:
+                    from datetime import datetime
+                    expires_at_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+                    BlacklistedToken.objects.get_or_create(
+                        token=token_id,
+                        user=request.user,
+                        defaults={"expires_at": expires_at_dt}
+                    )
+            return Response({"message": "Logged out successfully"})
+        except Exception as exc:
+            logger.error("Logout error for user %s: %s", request.user.id, exc)
+            return Response({"message": "Logged out (token blacklist failed)"}, status=status.HTTP_200_OK)
 
 
 class MeView(RetrieveUpdateAPIView):

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1100" viewBox="0 0 900 1100" role="img" aria-label="CSM Silks product placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7a1e1e"/>
+      <stop offset="50%" stop-color="#c4923a"/>
+      <stop offset="100%" stop-color="#0f5b45"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="1100" fill="url(#bg)"/>
+  <text x="450" y="560" text-anchor="middle" fill="#fff8ef" font-family="Georgia, serif" font-size="48" font-weight="700">CSM Silks</text>
+</svg>

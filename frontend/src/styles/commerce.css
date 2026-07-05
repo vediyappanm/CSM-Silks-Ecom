@@ -1892,6 +1892,22 @@
   margin-bottom: 18px;
 }
 
+.auth-dev-google-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 193, 7, 0.12);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.auth-dev-google-hint code {
+  font-size: 10px;
+}
+
 .auth-divider {
   display: flex;
   align-items: center;

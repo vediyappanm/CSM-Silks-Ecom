@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { GoogleOAuthProvider, type CredentialResponse } from '@react-oauth/google';
 import {
   CheckCircle2,
   ChevronRight,
@@ -34,7 +35,7 @@ type OTPDeliveryState = {
 
 const OTP_LENGTH = 6;
 const RESEND_SECONDS = 30;
-const AUTH_IMAGE_URL = 'https://picsum.photos/seed/csm-auth-silk/1200/1600';
+const AUTH_IMAGE_URL = '/placeholder-product.svg';
 
 function cleanPhone(value: string) {
   const raw = value.trim();
@@ -145,6 +146,28 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
     setError('');
     setResendIn(0);
   };
+
+  const handleGoogleSuccess = async (response: CredentialResponse) => {
+    if (!response.credential || loading) return;
+    setLoading(true);
+    setError('');
+    try {
+      await api.auth.googleLogin(response.credential);
+      await refreshSession();
+      showToast('OK', 'Signed in with Google', 'Your customer session is ready');
+      navigate(nextPath, { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setError('Google sign-in was cancelled or could not start. Check Authorized JavaScript origins in Google Cloud.');
+  };
+
+  const devGoogleOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
 
   const validatePhoneStep = () => {
     if (!isValidPhone(phone)) {
@@ -324,12 +347,24 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
 
           {step === 'phone' && showGoogle && (
             <div className="auth-google-block">
-              <GoogleSignInButton
-                clientId={googleClientId}
-                label={isSignup ? 'signup_with' : 'continue_with'}
-                disabled={loading}
-                nextPath={nextPath}
-              />
+              <GoogleOAuthProvider clientId={googleClientId}>
+                <GoogleSignInButton
+                  clientId={googleClientId}
+                  label={isSignup ? 'signup_with' : 'continue_with'}
+                  disabled={loading}
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                />
+              </GoogleOAuthProvider>
+              {import.meta.env.DEV && (
+                <p className="auth-dev-google-hint">
+                  Dev check: Client ID must match the OAuth client in Google Cloud.
+                  <br />
+                  <code>{googleClientId}</code>
+                  <br />
+                  Add JavaScript origin: <code>{devGoogleOrigin}</code>
+                </p>
+              )}
               <div className="auth-divider"><span>or continue with OTP</span></div>
             </div>
           )}
