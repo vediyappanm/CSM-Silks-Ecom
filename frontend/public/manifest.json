@@ -1,0 +1,63 @@
+{
+  "name": "CSM Silks — Pure Silk Sarees & Men's Silk",
+  "short_name": "CSM Silks",
+  "description": "Premium Kanjivaram silk sarees and men's silk from Kanchipuram. Bridal, festive, daily wear. Pan-India shipping.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9f6f0",
+  "theme_color": "#14100d",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-IN",
+  "categories": ["shopping", "lifestyle"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "apple touch icon"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Shop Women's Silk",
+      "short_name": "Sarees",
+      "url": "/womens",
+      "description": "Browse Kanjivaram and silk sarees"
+    },
+    {
+      "name": "Shop Men's Silk",
+      "short_name": "Men's Silk",
+      "url": "/mens",
+      "description": "Browse dhotis, veshtis and silk shirts"
+    },
+    {
+      "name": "My Cart",
+      "short_name": "Cart",
+      "url": "/cart",
+      "description": "View your shopping cart"
+    },
+    {
+      "name": "My Orders",
+      "short_name": "Orders",
+      "url": "/orders",
+      "description": "Track your orders"
+    }
+  ]
+}

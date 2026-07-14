@@ -85,7 +85,7 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
   const [resendIn, setResendIn] = useState(0);
   const [googleClientId, setGoogleClientId] = useState(FRONTEND_GOOGLE_CLIENT_ID);
   const [googleEnabled, setGoogleEnabled] = useState(Boolean(FRONTEND_GOOGLE_CLIENT_ID));
-  const [otpDevFallbackEnabled, setOtpDevFallbackEnabled] = useState(false);
+  const [otpDevFallbackEnabled, setOtpDevFallbackEnabled] = useState(Boolean(import.meta.env.DEV));
   const [otpDeliveryConfigured, setOtpDeliveryConfigured] = useState(false);
   const [devOtp, setDevOtp] = useState('');
 
@@ -129,6 +129,8 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
         if (!active) return;
         setGoogleClientId(FRONTEND_GOOGLE_CLIENT_ID);
         setGoogleEnabled(Boolean(FRONTEND_GOOGLE_CLIENT_ID));
+        // Keep local OTP usable when the API proxy is down or misrouted.
+        if (import.meta.env.DEV) setOtpDevFallbackEnabled(true);
       }
     };
     void loadAuthConfig();
@@ -208,6 +210,7 @@ export function CustomerAuth({ initialMode = 'login' }: CustomerAuthProps) {
       const channels = [
         response.sms_sent ? 'SMS' : '',
         response.email_sent ? 'email' : '',
+        response.dev_otp ? 'on-screen development OTP' : '',
       ].filter(Boolean);
       showToast(
         'OK',

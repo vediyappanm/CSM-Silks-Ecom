@@ -10,6 +10,10 @@ type GoogleSignInButtonProps = {
   onUnavailable?: () => void;
 };
 
+function googleCredentialsUrl(clientId: string) {
+  return `https://console.cloud.google.com/apis/credentials/oauthclient/${encodeURIComponent(clientId)}`;
+}
+
 export function GoogleSignInButton({
   clientId,
   label = 'continue_with',
@@ -33,6 +37,7 @@ export function GoogleSignInButton({
   }, []);
 
   useEffect(() => {
+    setUnavailable(false);
     const timer = window.setTimeout(() => {
       const iframe = wrapRef.current?.querySelector('iframe[src*="accounts.google.com"]');
       const height = iframe?.getBoundingClientRect().height || 0;
@@ -40,18 +45,36 @@ export function GoogleSignInButton({
         setUnavailable(true);
         onUnavailable?.();
       }
-    }, 5000);
+    }, 4500);
     return () => window.clearTimeout(timer);
   }, [clientId, onUnavailable]);
 
   if (!clientId) return null;
 
   if (unavailable) {
+    const origin = window.location.origin;
+    const consoleUrl = googleCredentialsUrl(clientId);
     return (
-      <p className="google-signin-fallback">
-        Google sign-in is not available for this site origin. Use phone OTP below, or add{' '}
-        <code>{window.location.origin}</code> to Authorized JavaScript origins in Google Cloud.
-      </p>
+      <div className="google-signin-fallback" role="alert">
+        <p>
+          Google Sign-In needs this origin on the OAuth Web client:{' '}
+          <code>{origin}</code>
+        </p>
+        <ol className="google-signin-steps">
+          <li>Open Google Cloud → Credentials → your OAuth 2.0 Web client</li>
+          <li>
+            Under <strong>Authorized JavaScript origins</strong>, add{' '}
+            <code>{origin}</code>
+          </li>
+          <li>Save, wait ~1 minute, then refresh this page</li>
+        </ol>
+        <a className="btn btn-secondary google-signin-console-link" href={consoleUrl} target="_blank" rel="noreferrer">
+          Open Google Cloud client settings
+        </a>
+        <p className="google-signin-fallback-note">
+          Until that is saved, use phone OTP below (local OTP appears on screen in development).
+        </p>
+      </div>
     );
   }
 

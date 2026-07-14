@@ -210,6 +210,17 @@ function formatApiError(value: unknown): string {
   return String(value);
 }
 
+class RateLimitError extends Error {
+  retryAfterSeconds: number;
+  constructor(retryAfter: number) {
+    super(`Too many requests. Please wait ${retryAfter} second${retryAfter === 1 ? '' : 's'} before trying again.`);
+    this.name = 'RateLimitError';
+    this.retryAfterSeconds = retryAfter;
+  }
+}
+
+export { RateLimitError };
+
 async function request<T>(endpoint: string, options?: RequestInit, retryOnUnauthorized = true): Promise<T> {
   let token = getAccessToken();
   if (token && !endpoint.startsWith('/auth/refresh')) {
@@ -228,6 +239,10 @@ async function request<T>(endpoint: string, options?: RequestInit, retryOnUnauth
   if (res.status === 401 && retryOnUnauthorized && !endpoint.startsWith('/auth/refresh')) {
     const refreshed = await refreshAccessToken();
     if (refreshed) return request<T>(endpoint, options, false);
+  }
+  if (res.status === 429) {
+    const retryAfter = Math.ceil(Number(res.headers.get('Retry-After') || '30'));
+    throw new RateLimitError(isNaN(retryAfter) ? 30 : retryAfter);
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));

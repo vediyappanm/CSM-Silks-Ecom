@@ -2006,10 +2006,32 @@
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+  display: grid;
+  gap: 10px;
+}
+
+.google-signin-fallback p {
+  margin: 0;
 }
 
 .google-signin-fallback code {
   color: var(--ink);
+  font-size: 12px;
+}
+
+.google-signin-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 4px;
+}
+
+.google-signin-console-link {
+  justify-self: start;
+  text-decoration: none;
+}
+
+.google-signin-fallback-note {
   font-size: 12px;
 }
 

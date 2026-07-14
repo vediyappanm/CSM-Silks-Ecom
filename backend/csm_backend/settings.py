@@ -410,3 +410,7 @@ SENTRY_TRACES_SAMPLE_RATE = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
 if IS_PRODUCTION:
     from .env_validation import validate_on_startup
     validate_on_startup()
+
+# Sentry error monitoring (no-ops when SENTRY_DSN is not set)
+from .sentry import init_sentry
+init_sentry()

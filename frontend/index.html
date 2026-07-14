@@ -2,13 +2,70 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#14100d" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0f0d0b" media="(prefers-color-scheme: dark)" />
+
+    <!-- Primary Meta -->
     <title>CSM Silks — Pure Silk Sarees & Men's Silk | Kanchipuram Est. 1987</title>
     <meta name="description" content="CSM Silks — Premium Kanjivaram silk sarees and men's silk dhotis, shirts & veshtis from Kanchipuram. Bridal, festive, daily. Free blouse. Pan-India shipping." />
+    <meta name="keywords" content="Kanjivaram sarees, silk sarees, Kanchipuram silk, bridal sarees, men's silk dhoti, veshti, CSM Silks" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://csmsilks.com/" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://csmsilks.com/" />
+    <meta property="og:title" content="CSM Silks — Pure Silk Sarees & Men's Silk | Kanchipuram" />
+    <meta property="og:description" content="Premium Kanjivaram silk sarees and men's silk dhotis from Kanchipuram. Bridal, festive, daily wear. Pan-India shipping with GST invoice." />
+    <meta property="og:image" content="https://csmsilks.com/og-image.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="CSM Silks" />
+    <meta property="og:locale" content="en_IN" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@csmsilks" />
+    <meta name="twitter:title" content="CSM Silks — Pure Silk Sarees & Men's Silk" />
+    <meta name="twitter:description" content="Premium Kanjivaram silk sarees and men's silk from Kanchipuram. Bridal, festive, daily wear. Pan-India shipping." />
+    <meta name="twitter:image" content="https://csmsilks.com/og-image.jpg" />
+
+    <!-- Favicon & Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme -->
+    <meta name="theme-color" content="#14100d" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f0d0b" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="CSM Silks" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Structured Data: Organization -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ClothingStore",
+      "name": "CSM Silks",
+      "url": "https://csmsilks.com",
+      "logo": "https://csmsilks.com/favicon.svg",
+      "description": "Premium Kanjivaram silk sarees and men's silk dhotis from Kanchipuram since 1987.",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Kanchipuram",
+        "addressRegion": "Tamil Nadu",
+        "addressCountry": "IN"
+      },
+      "sameAs": []
+    }
+    </script>
+
     <!-- Apply saved theme before React hydrates to prevent flash -->
     <script>
       (function() {
@@ -22,6 +79,11 @@
     </script>
   </head>
   <body>
+    <noscript>
+      <div style="padding:2rem;text-align:center;font-family:sans-serif">
+        CSM Silks requires JavaScript. Please enable it to shop our silk collection.
+      </div>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

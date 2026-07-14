@@ -1,0 +1,33 @@
+User-agent: *
+Allow: /
+
+# Allow all public pages
+Allow: /womens
+Allow: /mens
+Allow: /product/
+Allow: /search
+Allow: /tracking
+
+# Block private customer pages
+Disallow: /cart
+Disallow: /checkout
+Disallow: /orders
+Disallow: /account
+Disallow: /wishlist
+Disallow: /notifications
+Disallow: /login
+Disallow: /signup
+Disallow: /admin
+Disallow: /tryon
+
+# Block API
+Disallow: /api/
+
+# Block media admin
+Disallow: /django-admin/
+
+# Sitemap location
+Sitemap: https://csmsilks.com/sitemap.xml
+
+# Crawl delay for politeness
+Crawl-delay: 1
